@@ -39,12 +39,13 @@ const (
 
 // App represents the Sherlock application.
 type App struct {
-	cfg       *config.Config
-	aiClient  ai.ModelClient
-	agent     *agent.Agent
-	sshClient *sshclient.Client
-	ctx       context.Context
-	cancel    context.CancelFunc
+	cfg          *config.Config
+	aiClient     ai.ModelClient
+	agent        *agent.Agent
+	sshClient    *sshclient.Client
+	localClient  *sshclient.LocalClient
+	ctx          context.Context
+	cancel       context.CancelFunc
 }
 
 func main() {
@@ -141,6 +142,9 @@ func main() {
 	app.aiClient = aiClient
 	app.agent = agent.NewAgent(aiClient)
 
+	// Initialize local client for local command execution
+	app.localClient = sshclient.NewLocalClient()
+
 	// Run the application
 	if err := app.run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -159,7 +163,7 @@ func (a *App) run() error {
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
-		prompt := "sherlock> "
+		prompt := fmt.Sprintf("sherlock[%s]> ", a.localClient.HostInfoString())
 		if a.sshClient != nil && a.sshClient.IsConnected() {
 			prompt = fmt.Sprintf("sherlock[%s]> ", a.sshClient.HostInfoString())
 		}
@@ -207,17 +211,12 @@ func (a *App) handleInput(input string) error {
 		return a.handleDirectCommand(strings.TrimPrefix(input, "$"))
 	}
 
-	// Check if connected
-	if a.sshClient == nil || !a.sshClient.IsConnected() {
-		// Try to parse as connection request
-		if isConnectionRequest(input) {
-			return a.handleConnect(input)
-		}
-		fmt.Println("Not connected to any host. Use 'connect <host>' or describe a connection.")
-		return nil
+	// Try to parse as connection request first
+	if isConnectionRequest(input) {
+		return a.handleConnect(input)
 	}
 
-	// Parse as command request
+	// Parse as command request (works both locally and remotely)
 	return a.handleCommandRequest(input)
 }
 
@@ -282,10 +281,6 @@ func (a *App) handleDirectCommand(cmd string) error {
 		return nil
 	}
 
-	if a.sshClient == nil || !a.sshClient.IsConnected() {
-		return fmt.Errorf("not connected to any host")
-	}
-
 	return a.executeCommand(cmd)
 }
 
@@ -326,7 +321,14 @@ func (a *App) handleCommandRequest(input string) error {
 }
 
 func (a *App) executeCommand(cmd string) error {
-	result := a.sshClient.Execute(a.ctx, cmd)
+	var result *sshclient.ExecuteResult
+
+	// Use SSH client if connected, otherwise use local client
+	if a.sshClient != nil && a.sshClient.IsConnected() {
+		result = a.sshClient.Execute(a.ctx, cmd)
+	} else {
+		result = a.localClient.Execute(a.ctx, cmd)
+	}
 
 	if result.Stdout != "" {
 		fmt.Print(result.Stdout)
@@ -368,9 +370,9 @@ func (a *App) showStatus() {
 	fmt.Printf("LLM Model: %s\n", a.cfg.LLM.Model)
 
 	if a.sshClient != nil && a.sshClient.IsConnected() {
-		fmt.Printf("Connected to: %s\n", a.sshClient.HostInfoString())
+		fmt.Printf("Connected to: %s (remote)\n", a.sshClient.HostInfoString())
 	} else {
-		fmt.Println("SSH Status: Not connected")
+		fmt.Printf("Connected to: %s (local)\n", a.localClient.HostInfoString())
 	}
 }
 
@@ -441,15 +443,17 @@ Available commands:
   help                    Show this help message
   exit, quit, q           Exit Sherlock
   status                  Show current status
-  disconnect              Disconnect from current host
+  disconnect              Disconnect from remote host (switch to local mode)
 
 Connection:
   connect <host>          Connect to a remote host
   ssh user@host:port      Connect using SSH-like syntax
   Or describe in natural language, e.g., "connect to server 192.168.1.100 as root"
 
-Commands (when connected):
+Commands (local or remote):
   $<command>              Execute a command directly, e.g., $ls -la
   Or describe in natural language, e.g., "show me disk usage"
+
+Note: When not connected to a remote host, commands are executed locally.
 `)
 }

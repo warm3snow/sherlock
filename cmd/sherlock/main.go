@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -259,6 +260,8 @@ func (a *App) handleInput(input string) error {
 
 		fmt.Println("Not connected to any host. Use 'connect <host>' or describe a connection.")
 		return nil
+	}
+
 	// Try to parse as connection request first
 	if isConnectionRequest(input) {
 		return a.handleConnect(input)
@@ -296,99 +299,89 @@ func (a *App) handleConnect(input string) error {
 func (a *App) connectToHost(host string, port int, user string) error {
 	fmt.Printf("Connecting to %s@%s:%d...\n", user, host, port)
 
-	// Check if this host has public key added previously
-	hasPubKey := false
-	if a.historyManager != nil {
-		hasPubKey = a.historyManager.HasPubKey(host, port, user)
-	}
-
 	hostInfo := &sshclient.HostInfo{
 		Host: host,
 		Port: port,
 		User: user,
 	}
 
-	var password string
-	usedKeyAuth := false
+	// Always try key-based authentication first
+	fmt.Println("Attempting key-based authentication...")
+	clientCfg := &sshclient.Config{
+		HostInfo:       hostInfo,
+		PrivateKeyPath: a.cfg.SSHKey.PrivateKeyPath,
+	}
 
-	if hasPubKey {
-		// Try to connect with SSH key first without prompting for password
-		fmt.Println("Attempting key-based authentication...")
-		clientCfg := &sshclient.Config{
-			HostInfo:       hostInfo,
-			PrivateKeyPath: a.cfg.SSHKey.PrivateKeyPath,
-		}
-
-		client, err := sshclient.NewClient(clientCfg)
-		if err == nil {
-			if err := client.Connect(a.ctx); err == nil {
-				// Key auth succeeded
-				usedKeyAuth = true
-				if a.sshClient != nil {
-					_ = a.sshClient.Close()
-				}
-				a.sshClient = client
-				fmt.Printf("Successfully connected to %s using SSH key\n", client.HostInfoString())
-
-				// Update history
-				if a.historyManager != nil {
-					_ = a.historyManager.AddRecord(host, port, user, true)
-				}
-				return nil
+	client, err := sshclient.NewClient(clientCfg)
+	if err == nil {
+		if err := client.Connect(a.ctx); err == nil {
+			// Key auth succeeded
+			if a.sshClient != nil {
+				_ = a.sshClient.Close()
 			}
-			// Key auth failed, will fall through to password prompt
-			fmt.Println("Key authentication failed, falling back to password...")
+			a.sshClient = client
+			fmt.Printf("Successfully connected to %s using SSH key\n", client.HostInfoString())
+
+			// Update history
+			if a.historyManager != nil {
+				_ = a.historyManager.AddRecord(host, port, user, true)
+			}
+			return nil
+		}
+		// Key auth failed, will fall through to password prompt
+		fmt.Println("Key authentication failed, falling back to password...")
+	}
+
+	// Key auth failed, prompt for password
+	fmt.Print("Password: ")
+	reader := bufio.NewReader(os.Stdin)
+	password, _ := reader.ReadString('\n')
+	password = strings.TrimSpace(password)
+
+	if password == "" {
+		return fmt.Errorf("password is required when key authentication fails")
+	}
+
+	// Create SSH client with password
+	clientCfg = &sshclient.Config{
+		HostInfo:       hostInfo,
+		Password:       password,
+		PrivateKeyPath: a.cfg.SSHKey.PrivateKeyPath,
+	}
+
+	client, err = sshclient.NewClient(clientCfg)
+	if err != nil {
+		return fmt.Errorf("failed to create SSH client: %w", err)
+	}
+
+	// Connect
+	if err := client.Connect(a.ctx); err != nil {
+		return fmt.Errorf("failed to connect: %w", err)
+	}
+
+	// Close existing connection if any
+	if a.sshClient != nil {
+		_ = a.sshClient.Close()
+	}
+
+	a.sshClient = client
+	fmt.Printf("Successfully connected to %s\n", client.HostInfoString())
+
+	// Optionally add public key to authorized_keys
+	pubKeyAdded := false
+	if a.cfg.SSHKey.AutoAddToRemote {
+		fmt.Println("Adding public key to remote authorized_keys...")
+		if err := client.AddPublicKeyToAuthorizedKeys(a.ctx, a.cfg.SSHKey.PublicKeyPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: Failed to add public key: %v\n", err)
+		} else {
+			fmt.Println("Public key added successfully. Future connections can use key authentication.")
+			pubKeyAdded = true
 		}
 	}
 
-	if !usedKeyAuth {
-		// Prompt for password
-		fmt.Print("Password (leave empty to use SSH key): ")
-		reader := bufio.NewReader(os.Stdin)
-		password, _ = reader.ReadString('\n')
-		password = strings.TrimSpace(password)
-
-		// Create SSH client
-		clientCfg := &sshclient.Config{
-			HostInfo:       hostInfo,
-			Password:       password,
-			PrivateKeyPath: a.cfg.SSHKey.PrivateKeyPath,
-		}
-
-		client, err := sshclient.NewClient(clientCfg)
-		if err != nil {
-			return fmt.Errorf("failed to create SSH client: %w", err)
-		}
-
-		// Connect
-		if err := client.Connect(a.ctx); err != nil {
-			return fmt.Errorf("failed to connect: %w", err)
-		}
-
-		// Close existing connection if any
-		if a.sshClient != nil {
-			_ = a.sshClient.Close()
-		}
-
-		a.sshClient = client
-		fmt.Printf("Successfully connected to %s\n", client.HostInfoString())
-
-		// Optionally add public key to authorized_keys
-		pubKeyAdded := false
-		if a.cfg.SSHKey.AutoAddToRemote && password != "" {
-			fmt.Println("Adding public key to remote authorized_keys...")
-			if err := client.AddPublicKeyToAuthorizedKeys(a.ctx, a.cfg.SSHKey.PublicKeyPath); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: Failed to add public key: %v\n", err)
-			} else {
-				fmt.Println("Public key added successfully. Future connections can use key authentication.")
-				pubKeyAdded = true
-			}
-		}
-
-		// Update history
-		if a.historyManager != nil {
-			_ = a.historyManager.AddRecord(host, port, user, pubKeyAdded)
-		}
+	// Update history
+	if a.historyManager != nil {
+		_ = a.historyManager.AddRecord(host, port, user, pubKeyAdded)
 	}
 
 	return nil
@@ -510,7 +503,7 @@ func (a *App) cleanup() {
 
 func isConnectionRequest(input string) bool {
 	lower := strings.ToLower(input)
-	keywords := []string{"connect", "ssh", "login", "log in"}
+	keywords := []string{"connect", "ssh", "login", "log in", "连接", "登录", "登陆"}
 	for _, kw := range keywords {
 		if strings.Contains(lower, kw) {
 			return true
@@ -518,6 +511,11 @@ func isConnectionRequest(input string) bool {
 	}
 	// Check for user@host pattern
 	if strings.Contains(input, "@") {
+		return true
+	}
+	// Check for IP address pattern (supports simple IP like 192.168.40.22)
+	ipPattern := regexp.MustCompile(`\b(\d{1,3}\.){3}\d{1,3}\b`)
+	if ipPattern.MatchString(input) {
 		return true
 	}
 	return false

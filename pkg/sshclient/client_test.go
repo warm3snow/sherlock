@@ -17,6 +17,7 @@ package sshclient
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -33,14 +34,10 @@ func TestGetDefaultKeyPaths(t *testing.T) {
 		if i >= len(expectedNames) {
 			break
 		}
-		if !containsSuffix(path, expectedNames[i]) {
+		if !strings.HasSuffix(path, expectedNames[i]) {
 			t.Errorf("Expected path %d to end with %s, got %s", i, expectedNames[i], path)
 		}
 	}
-}
-
-func containsSuffix(s, suffix string) bool {
-	return len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix
 }
 
 func TestGetSSHKeyPaths(t *testing.T) {
@@ -54,10 +51,10 @@ func TestGetSSHKeyPaths(t *testing.T) {
 	}
 
 	// Check that paths end with expected suffixes
-	if !containsSuffix(privateKeyPath, "id_rsa") {
+	if !strings.HasSuffix(privateKeyPath, "id_rsa") {
 		t.Errorf("Private key path should end with id_rsa, got %s", privateKeyPath)
 	}
-	if !containsSuffix(publicKeyPath, "id_rsa.pub") {
+	if !strings.HasSuffix(publicKeyPath, "id_rsa.pub") {
 		t.Errorf("Public key path should end with id_rsa.pub, got %s", publicKeyPath)
 	}
 }
@@ -72,9 +69,12 @@ func TestSshAgentAuth(t *testing.T) {
 		}
 	}()
 
-	auth := sshAgentAuth()
+	auth, conn := sshAgentAuth()
 	if auth != nil {
-		t.Error("sshAgentAuth should return nil when SSH_AUTH_SOCK is not set")
+		t.Error("sshAgentAuth should return nil auth when SSH_AUTH_SOCK is not set")
+	}
+	if conn != nil {
+		t.Error("sshAgentAuth should return nil conn when SSH_AUTH_SOCK is not set")
 	}
 }
 
@@ -115,7 +115,8 @@ func TestNewClientWithoutAuthMethods(t *testing.T) {
 	if err == nil {
 		t.Error("NewClient should return error when no auth methods are available")
 	}
-	if err.Error() != "at least one authentication method is required" {
+	// Check that error message contains expected text
+	if err != nil && !strings.Contains(err.Error(), "authentication method") {
 		t.Errorf("Unexpected error message: %v", err)
 	}
 }

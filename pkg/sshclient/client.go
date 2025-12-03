@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 )
 
 // AuthMethod represents the SSH authentication method.
@@ -112,9 +113,25 @@ func NewClient(cfg *Config) (*Client, error) {
 
 	var authMethods []ssh.AuthMethod
 
-	// Try public key authentication first
+	// Try SSH agent authentication first (highest priority)
+	if agentAuth := sshAgentAuth(); agentAuth != nil {
+		authMethods = append(authMethods, agentAuth)
+	}
+
+	// Try public key authentication with specified key path
 	if cfg.PrivateKeyPath != "" {
 		keyAuth, err := publicKeyAuth(cfg.PrivateKeyPath, cfg.PrivateKeyPassphrase)
+		if err == nil {
+			authMethods = append(authMethods, keyAuth)
+		}
+	}
+
+	// Try default SSH key paths (always try to add more auth methods)
+	for _, keyPath := range GetDefaultKeyPaths() {
+		if keyPath == cfg.PrivateKeyPath {
+			continue // Skip if already tried
+		}
+		keyAuth, err := publicKeyAuth(keyPath, "")
 		if err == nil {
 			authMethods = append(authMethods, keyAuth)
 		}
@@ -145,6 +162,22 @@ func NewClient(cfg *Config) (*Client, error) {
 		hostInfo:  cfg.HostInfo,
 		sshConfig: sshConfig,
 	}, nil
+}
+
+// sshAgentAuth creates an ssh.AuthMethod from the SSH agent.
+func sshAgentAuth() ssh.AuthMethod {
+	socket := os.Getenv("SSH_AUTH_SOCK")
+	if socket == "" {
+		return nil
+	}
+
+	conn, err := net.Dial("unix", socket)
+	if err != nil {
+		return nil
+	}
+
+	agentClient := agent.NewClient(conn)
+	return ssh.PublicKeysCallback(agentClient.Signers)
 }
 
 // publicKeyAuth creates an ssh.AuthMethod from a private key file.
@@ -307,10 +340,22 @@ func (c *Client) HostInfoString() string {
 	return fmt.Sprintf("%s@%s:%d", c.hostInfo.User, c.hostInfo.Host, c.hostInfo.Port)
 }
 
-// GetSSHKeyPaths returns the default SSH key paths.
+// GetSSHKeyPaths returns the default SSH key paths (for backward compatibility).
 func GetSSHKeyPaths() (privateKeyPath, publicKeyPath string) {
 	homeDir, _ := os.UserHomeDir()
 	privateKeyPath = filepath.Join(homeDir, ".ssh", "id_rsa")
 	publicKeyPath = filepath.Join(homeDir, ".ssh", "id_rsa.pub")
 	return
+}
+
+// GetDefaultKeyPaths returns all default SSH private key paths to try.
+func GetDefaultKeyPaths() []string {
+	homeDir, _ := os.UserHomeDir()
+	sshDir := filepath.Join(homeDir, ".ssh")
+	return []string{
+		filepath.Join(sshDir, "id_ed25519"),
+		filepath.Join(sshDir, "id_ecdsa"),
+		filepath.Join(sshDir, "id_rsa"),
+		filepath.Join(sshDir, "id_dsa"),
+	}
 }

@@ -12,31 +12,36 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package history provides login history management for Sherlock.
+// Package history provides login history management for Sherlock using SQLite3.
 package history
 
 import (
-	"encoding/json"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // Record represents a login history record.
 type Record struct {
+	// ID is the unique identifier.
+	ID int64
 	// Host is the hostname or IP address.
-	Host string `json:"host"`
+	Host string
 	// Port is the SSH port.
-	Port int `json:"port"`
+	Port int
 	// User is the SSH username.
-	User string `json:"user"`
+	User string
 	// Timestamp is when the connection was made.
-	Timestamp time.Time `json:"timestamp"`
+	Timestamp time.Time
 	// HasPubKey indicates if the public key was added to the remote host.
-	HasPubKey bool `json:"has_pub_key"`
+	HasPubKey bool
+	// LoginCount is the number of times this host has been logged into.
+	LoginCount int
 }
 
 // HostKey returns a unique key for the host (user@host:port).
@@ -44,154 +49,223 @@ func (r *Record) HostKey() string {
 	return fmt.Sprintf("%s@%s:%d", r.User, r.Host, r.Port)
 }
 
-// Manager manages login history.
+// Manager manages login history using SQLite3.
 type Manager struct {
-	historyPath string
-	records     []Record
+	dbPath string
+	db     *sql.DB
 }
 
 // NewManager creates a new history manager.
 func NewManager() (*Manager, error) {
-	historyPath := GetHistoryPath()
+	dbPath := GetDBPath()
 	m := &Manager{
-		historyPath: historyPath,
-		records:     make([]Record, 0),
+		dbPath: dbPath,
 	}
 
-	if err := m.load(); err != nil {
-		// If file doesn't exist, that's ok
-		if !os.IsNotExist(err) {
-			return nil, fmt.Errorf("failed to load history: %w", err)
-		}
+	if err := m.initDB(); err != nil {
+		return nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
 
 	return m, nil
 }
 
-// GetHistoryPath returns the default history file path.
-func GetHistoryPath() string {
+// GetDBPath returns the default database file path.
+func GetDBPath() string {
 	homeDir, _ := os.UserHomeDir()
-	return filepath.Join(homeDir, ".config", "sherlock", "history.json")
+	return filepath.Join(homeDir, ".config", "sherlock", "history.db")
 }
 
-// load loads history from file.
-func (m *Manager) load() error {
-	data, err := os.ReadFile(m.historyPath)
-	if err != nil {
-		return err
-	}
-
-	return json.Unmarshal(data, &m.records)
-}
-
-// save saves history to file.
-func (m *Manager) save() error {
-	dir := filepath.Dir(m.historyPath)
+// initDB initializes the SQLite database.
+func (m *Manager) initDB() error {
+	dir := filepath.Dir(m.dbPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create history directory: %w", err)
 	}
 
-	data, err := json.MarshalIndent(m.records, "", "  ")
+	db, err := sql.Open("sqlite3", m.dbPath)
 	if err != nil {
-		return fmt.Errorf("failed to marshal history: %w", err)
+		return fmt.Errorf("failed to open database: %w", err)
 	}
 
-	return os.WriteFile(m.historyPath, data, 0600)
+	// Create table if not exists
+	createTableSQL := `
+	CREATE TABLE IF NOT EXISTS hosts (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		host TEXT NOT NULL,
+		port INTEGER NOT NULL,
+		user TEXT NOT NULL,
+		timestamp DATETIME NOT NULL,
+		has_pub_key BOOLEAN DEFAULT FALSE,
+		login_count INTEGER DEFAULT 1,
+		UNIQUE(host, port, user)
+	);
+	CREATE INDEX IF NOT EXISTS idx_hosts_timestamp ON hosts(timestamp DESC);
+	CREATE INDEX IF NOT EXISTS idx_hosts_host ON hosts(host);
+	CREATE INDEX IF NOT EXISTS idx_hosts_user ON hosts(user);
+	`
+
+	_, err = db.Exec(createTableSQL)
+	if err != nil {
+		db.Close()
+		return fmt.Errorf("failed to create table: %w", err)
+	}
+
+	m.db = db
+	return nil
 }
 
-// AddRecord adds a new login record.
-func (m *Manager) AddRecord(host string, port int, user string, hasPubKey bool) error {
-	record := Record{
-		Host:      host,
-		Port:      port,
-		User:      user,
-		Timestamp: time.Now(),
-		HasPubKey: hasPubKey,
-	}
-
-	// Check if this host already exists and update it
-	hostKey := record.HostKey()
-	for i, r := range m.records {
-		if r.HostKey() == hostKey {
-			// Update existing record
-			m.records[i].Timestamp = record.Timestamp
-			if hasPubKey {
-				m.records[i].HasPubKey = true
-			}
-			return m.save()
-		}
-	}
-
-	// Add new record
-	m.records = append(m.records, record)
-	return m.save()
-}
-
-// MarkPubKeyAdded marks a host as having public key added.
-func (m *Manager) MarkPubKeyAdded(host string, port int, user string) error {
-	hostKey := fmt.Sprintf("%s@%s:%d", user, host, port)
-	for i, r := range m.records {
-		if r.HostKey() == hostKey {
-			m.records[i].HasPubKey = true
-			return m.save()
-		}
+// Close closes the database connection.
+func (m *Manager) Close() error {
+	if m.db != nil {
+		return m.db.Close()
 	}
 	return nil
 }
 
-// HasPubKey checks if a host has public key added.
-func (m *Manager) HasPubKey(host string, port int, user string) bool {
-	hostKey := fmt.Sprintf("%s@%s:%d", user, host, port)
-	for _, r := range m.records {
-		if r.HostKey() == hostKey {
-			return r.HasPubKey
+// AddRecord adds or updates a login record.
+func (m *Manager) AddRecord(host string, port int, user string, hasPubKey bool) error {
+	// Try to update existing record first
+	updateSQL := `
+	UPDATE hosts SET 
+		timestamp = ?,
+		login_count = login_count + 1,
+		has_pub_key = CASE WHEN ? THEN TRUE ELSE has_pub_key END
+	WHERE host = ? AND port = ? AND user = ?
+	`
+
+	result, err := m.db.Exec(updateSQL, time.Now(), hasPubKey, host, port, user)
+	if err != nil {
+		return fmt.Errorf("failed to update record: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	// If no rows were updated, insert a new record
+	if rowsAffected == 0 {
+		insertSQL := `
+		INSERT INTO hosts (host, port, user, timestamp, has_pub_key, login_count)
+		VALUES (?, ?, ?, ?, ?, 1)
+		`
+		_, err = m.db.Exec(insertSQL, host, port, user, time.Now(), hasPubKey)
+		if err != nil {
+			return fmt.Errorf("failed to insert record: %w", err)
 		}
 	}
-	return false
+
+	return nil
+}
+
+// MarkPubKeyAdded marks a host as having public key added.
+func (m *Manager) MarkPubKeyAdded(host string, port int, user string) error {
+	updateSQL := `UPDATE hosts SET has_pub_key = TRUE WHERE host = ? AND port = ? AND user = ?`
+	_, err := m.db.Exec(updateSQL, host, port, user)
+	return err
+}
+
+// HasPubKey checks if a host has public key added.
+func (m *Manager) HasPubKey(host string, port int, user string) bool {
+	var hasPubKey bool
+	query := `SELECT has_pub_key FROM hosts WHERE host = ? AND port = ? AND user = ?`
+	err := m.db.QueryRow(query, host, port, user).Scan(&hasPubKey)
+	if err != nil {
+		return false
+	}
+	return hasPubKey
 }
 
 // GetRecords returns all history records, sorted by timestamp (newest first).
 func (m *Manager) GetRecords() []Record {
-	records := make([]Record, len(m.records))
-	copy(records, m.records)
-
-	sort.Slice(records, func(i, j int) bool {
-		return records[i].Timestamp.After(records[j].Timestamp)
-	})
-
-	return records
+	query := `SELECT id, host, port, user, timestamp, has_pub_key, login_count FROM hosts ORDER BY timestamp DESC`
+	return m.queryRecords(query)
 }
 
 // GetRecentRecords returns the most recent N history records.
 func (m *Manager) GetRecentRecords(n int) []Record {
-	records := m.GetRecords()
-	if n > len(records) {
-		n = len(records)
-	}
-	return records[:n]
+	query := `SELECT id, host, port, user, timestamp, has_pub_key, login_count FROM hosts ORDER BY timestamp DESC LIMIT ?`
+	return m.queryRecordsWithArgs(query, n)
 }
 
 // SearchRecords searches for records matching the query.
 // Query can be a host, user, or user@host pattern.
 func (m *Manager) SearchRecords(query string) []Record {
-	query = strings.ToLower(query)
-	var results []Record
+	searchQuery := "%" + strings.ToLower(query) + "%"
+	sqlQuery := `
+	SELECT id, host, port, user, timestamp, has_pub_key, login_count 
+	FROM hosts 
+	WHERE LOWER(host) LIKE ? OR LOWER(user) LIKE ? OR LOWER(host || ':' || port) LIKE ?
+	ORDER BY timestamp DESC
+	`
+	return m.queryRecordsWithArgs(sqlQuery, searchQuery, searchQuery, searchQuery)
+}
 
-	for _, r := range m.records {
-		// Match against host, user, or full hostKey
-		if strings.Contains(strings.ToLower(r.Host), query) ||
-			strings.Contains(strings.ToLower(r.User), query) ||
-			strings.Contains(strings.ToLower(r.HostKey()), query) {
-			results = append(results, r)
+// GetRecordByID returns a record by its ID.
+func (m *Manager) GetRecordByID(id int64) (*Record, error) {
+	query := `SELECT id, host, port, user, timestamp, has_pub_key, login_count FROM hosts WHERE id = ?`
+	row := m.db.QueryRow(query, id)
+
+	var r Record
+	var timestamp string
+	err := row.Scan(&r.ID, &r.Host, &r.Port, &r.User, &timestamp, &r.HasPubKey, &r.LoginCount)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("record not found")
 		}
+		return nil, err
 	}
 
-	// Sort by timestamp (newest first)
-	sort.Slice(results, func(i, j int) bool {
-		return results[i].Timestamp.After(results[j].Timestamp)
-	})
+	r.Timestamp, _ = time.Parse("2006-01-02 15:04:05.999999999-07:00", timestamp)
+	if r.Timestamp.IsZero() {
+		r.Timestamp, _ = time.Parse("2006-01-02T15:04:05Z", timestamp)
+	}
+	if r.Timestamp.IsZero() {
+		r.Timestamp, _ = time.Parse(time.RFC3339, timestamp)
+	}
 
-	return results
+	return &r, nil
+}
+
+func (m *Manager) queryRecords(query string) []Record {
+	rows, err := m.db.Query(query)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	return m.scanRecords(rows)
+}
+
+func (m *Manager) queryRecordsWithArgs(query string, args ...interface{}) []Record {
+	rows, err := m.db.Query(query, args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	return m.scanRecords(rows)
+}
+
+func (m *Manager) scanRecords(rows *sql.Rows) []Record {
+	var records []Record
+	for rows.Next() {
+		var r Record
+		var timestamp string
+		err := rows.Scan(&r.ID, &r.Host, &r.Port, &r.User, &timestamp, &r.HasPubKey, &r.LoginCount)
+		if err != nil {
+			continue
+		}
+		r.Timestamp, _ = time.Parse("2006-01-02 15:04:05.999999999-07:00", timestamp)
+		if r.Timestamp.IsZero() {
+			r.Timestamp, _ = time.Parse("2006-01-02T15:04:05Z", timestamp)
+		}
+		if r.Timestamp.IsZero() {
+			r.Timestamp, _ = time.Parse(time.RFC3339, timestamp)
+		}
+		records = append(records, r)
+	}
+	return records
 }
 
 // FormatRecords returns a formatted string of history records.
@@ -202,19 +276,46 @@ func FormatRecords(records []Record) string {
 
 	var sb strings.Builder
 	sb.WriteString("Login History:\n")
-	sb.WriteString(strings.Repeat("-", 60) + "\n")
+	sb.WriteString(strings.Repeat("-", 70) + "\n")
+	sb.WriteString(fmt.Sprintf("%-4s %-30s %-6s %-20s\n", "ID", "Host", "Logins", "Last Login"))
+	sb.WriteString(strings.Repeat("-", 70) + "\n")
 
-	for i, r := range records {
+	for _, r := range records {
 		pubKeyStatus := ""
 		if r.HasPubKey {
 			pubKeyStatus = " [key]"
 		}
-		sb.WriteString(fmt.Sprintf("%2d. %s%s\n    Last login: %s\n",
-			i+1,
+		sb.WriteString(fmt.Sprintf("%-4d %-30s %-6d %s%s\n",
+			r.ID,
 			r.HostKey(),
-			pubKeyStatus,
-			r.Timestamp.Format("2006-01-02 15:04:05")))
+			r.LoginCount,
+			r.Timestamp.Format("2006-01-02 15:04:05"),
+			pubKeyStatus))
 	}
+
+	return sb.String()
+}
+
+// FormatHostsSimple returns a simple formatted string of hosts for quick selection.
+func FormatHostsSimple(records []Record) string {
+	if len(records) == 0 {
+		return "No saved hosts found."
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Saved Hosts:\n")
+	sb.WriteString(strings.Repeat("-", 50) + "\n")
+
+	for _, r := range records {
+		pubKeyStatus := ""
+		if r.HasPubKey {
+			pubKeyStatus = " [key]"
+		}
+		sb.WriteString(fmt.Sprintf("[%d] %s%s\n", r.ID, r.HostKey(), pubKeyStatus))
+	}
+
+	sb.WriteString(strings.Repeat("-", 50) + "\n")
+	sb.WriteString("Use 'connect <id>' to connect to a saved host.\n")
 
 	return sb.String()
 }

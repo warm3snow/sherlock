@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -50,6 +51,15 @@ type App struct {
 }
 
 func main() {
+	// Check for subcommands first
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "hosts":
+			handleHostsCommand()
+			return
+		}
+	}
+
 	var (
 		configPath    string
 		showVersion   bool
@@ -207,6 +217,8 @@ func (a *App) handleInput(input string) error {
 		return nil
 	case "history":
 		return a.showHistory("")
+	case "hosts":
+		return a.showHosts()
 	}
 
 	// Check for history command with search query
@@ -237,6 +249,11 @@ func (a *App) handleInput(input string) error {
 			return a.handleHistoryRequest(input)
 		}
 
+		// Check if it's a hosts query in natural language
+		if isHostsRequest(input) {
+			return a.showHosts()
+		}
+
 		fmt.Println("Not connected to any host. Use 'connect <host>' or describe a connection.")
 		return nil
 	}
@@ -246,6 +263,19 @@ func (a *App) handleInput(input string) error {
 }
 
 func (a *App) handleConnect(input string) error {
+	// Check if input is a numeric ID (connect to saved host by ID)
+	trimmedInput := strings.TrimSpace(input)
+	// Handle "connect <id>" pattern
+	if strings.HasPrefix(strings.ToLower(trimmedInput), "connect ") {
+		idStr := strings.TrimSpace(strings.TrimPrefix(strings.ToLower(trimmedInput), "connect "))
+		if id, err := strconv.ParseInt(idStr, 10, 64); err == nil && a.historyManager != nil {
+			record, err := a.historyManager.GetRecordByID(id)
+			if err == nil {
+				return a.connectToHost(record.Host, record.Port, record.User)
+			}
+		}
+	}
+
 	// Parse connection request using AI
 	fmt.Println("Parsing connection request...")
 
@@ -254,12 +284,22 @@ func (a *App) handleConnect(input string) error {
 		return fmt.Errorf("failed to parse connection request: %w", err)
 	}
 
-	fmt.Printf("Connecting to %s@%s:%d...\n", connInfo.User, connInfo.Host, connInfo.Port)
+	return a.connectToHost(connInfo.Host, connInfo.Port, connInfo.User)
+}
+
+func (a *App) connectToHost(host string, port int, user string) error {
+	fmt.Printf("Connecting to %s@%s:%d...\n", user, host, port)
 
 	// Check if this host has public key added previously
 	hasPubKey := false
 	if a.historyManager != nil {
-		hasPubKey = a.historyManager.HasPubKey(connInfo.Host, connInfo.Port, connInfo.User)
+		hasPubKey = a.historyManager.HasPubKey(host, port, user)
+	}
+
+	hostInfo := &sshclient.HostInfo{
+		Host: host,
+		Port: port,
+		User: user,
 	}
 
 	var password string
@@ -269,7 +309,7 @@ func (a *App) handleConnect(input string) error {
 		// Try to connect with SSH key first without prompting for password
 		fmt.Println("Attempting key-based authentication...")
 		clientCfg := &sshclient.Config{
-			HostInfo:       connInfo.ToHostInfo(),
+			HostInfo:       hostInfo,
 			PrivateKeyPath: a.cfg.SSHKey.PrivateKeyPath,
 		}
 
@@ -286,7 +326,7 @@ func (a *App) handleConnect(input string) error {
 
 				// Update history
 				if a.historyManager != nil {
-					_ = a.historyManager.AddRecord(connInfo.Host, connInfo.Port, connInfo.User, true)
+					_ = a.historyManager.AddRecord(host, port, user, true)
 				}
 				return nil
 			}
@@ -304,7 +344,7 @@ func (a *App) handleConnect(input string) error {
 
 		// Create SSH client
 		clientCfg := &sshclient.Config{
-			HostInfo:       connInfo.ToHostInfo(),
+			HostInfo:       hostInfo,
 			Password:       password,
 			PrivateKeyPath: a.cfg.SSHKey.PrivateKeyPath,
 		}
@@ -341,7 +381,7 @@ func (a *App) handleConnect(input string) error {
 
 		// Update history
 		if a.historyManager != nil {
-			_ = a.historyManager.AddRecord(connInfo.Host, connInfo.Port, connInfo.User, pubKeyAdded)
+			_ = a.historyManager.AddRecord(host, port, user, pubKeyAdded)
 		}
 	}
 
@@ -453,6 +493,9 @@ func (a *App) cleanup() {
 	if a.aiClient != nil {
 		_ = a.aiClient.Close()
 	}
+	if a.historyManager != nil {
+		_ = a.historyManager.Close()
+	}
 	a.cancel()
 }
 
@@ -482,6 +525,17 @@ func isHistoryRequest(input string) bool {
 	return false
 }
 
+func isHostsRequest(input string) bool {
+	lower := strings.ToLower(input)
+	keywords := []string{"hosts", "主机", "服务器", "saved hosts", "show hosts", "list hosts", "查看主机", "显示主机", "all hosts"}
+	for _, kw := range keywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
 func (a *App) showHistory(query string) error {
 	if a.historyManager == nil {
 		fmt.Println("History feature is not available.")
@@ -496,6 +550,17 @@ func (a *App) showHistory(query string) error {
 	}
 
 	fmt.Print(history.FormatRecords(records))
+	return nil
+}
+
+func (a *App) showHosts() error {
+	if a.historyManager == nil {
+		fmt.Println("Hosts feature is not available.")
+		return nil
+	}
+
+	records := a.historyManager.GetRecords()
+	fmt.Print(history.FormatHostsSimple(records))
 	return nil
 }
 
@@ -516,6 +581,19 @@ func (a *App) handleHistoryRequest(input string) error {
 	return a.showHistory(query)
 }
 
+// handleHostsCommand handles the 'sherlock hosts' subcommand.
+func handleHostsCommand() {
+	historyMgr, err := history.NewManager()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Failed to initialize history manager: %v\n", err)
+		os.Exit(1)
+	}
+	defer historyMgr.Close()
+
+	records := historyMgr.GetRecords()
+	fmt.Print(history.FormatHostsSimple(records))
+}
+
 func printBanner() {
 	fmt.Print(`
   _____ _    _ ______ _____  _      ____   _____ _  __
@@ -532,7 +610,10 @@ AI-powered SSH Remote Operations Tool
 func printHelp() {
 	fmt.Printf(`%s - %s
 
-Usage: sherlock [options]
+Usage: sherlock [options] [command]
+
+Commands:
+  hosts                   Show all saved hosts
 
 Options:
   -c, --config <path>     Path to configuration file
@@ -545,6 +626,7 @@ Options:
 
 Examples:
   sherlock                           Start interactive mode with default config
+  sherlock hosts                     Show all saved hosts
   sherlock --provider ollama         Use Ollama as LLM provider
   sherlock -c ~/.config/sherlock/config.json
 
@@ -559,14 +641,20 @@ Available commands:
   exit, quit, q           Exit Sherlock
   status                  Show current status
   disconnect              Disconnect from current host
+  hosts                   Show all saved hosts
   history                 Show login history
   history <query>         Search login history
 
 Connection:
   connect <host>          Connect to a remote host
+  connect <id>            Connect to a saved host by ID
   ssh user@host:port      Connect using SSH-like syntax
   Or describe in natural language, e.g., "connect to server 192.168.1.100 as root"
   Note: If you have logged in before with SSH key, no password will be required.
+
+Hosts:
+  hosts                   Show all saved hosts with IDs
+  Or use natural language, e.g., "show my hosts" or "显示主机"
 
 History:
   history                 Show all login history

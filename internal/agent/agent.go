@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"regexp"
 	"strconv"
 	"strings"
@@ -44,11 +45,12 @@ func NewAgent(aiClient ai.ModelClient) *Agent {
 
 const systemPromptConnection = `You are Sherlock, an AI assistant for SSH remote operations.
 Your task is to parse natural language requests to connect to remote hosts.
+You must support both English and Chinese inputs.
 
 When the user provides connection information, extract:
 1. Host: The hostname or IP address
 2. Port: The SSH port (default 22 if not specified)
-3. User: The username
+3. User: The username (default "root" if not specified)
 
 Respond in JSON format only:
 {
@@ -65,7 +67,10 @@ If you cannot determine the required information, respond with an error:
 Examples:
 - "connect to 192.168.1.100 as root" -> {"host": "192.168.1.100", "port": 22, "user": "root"}
 - "ssh user@example.com:2222" -> {"host": "example.com", "port": 2222, "user": "user"}
-- "login to server 10.0.0.1 port 2222 as admin" -> {"host": "10.0.0.1", "port": 2222, "user": "admin"}`
+- "login to server 10.0.0.1 port 2222 as admin" -> {"host": "10.0.0.1", "port": 2222, "user": "admin"}
+- "连接192.168.1.100" -> {"host": "192.168.1.100", "port": 22, "user": "root"}
+- "连接到192.168.1.100用户admin" -> {"host": "192.168.1.100", "port": 22, "user": "admin"}
+- "登录服务器10.0.0.1端口2222用户admin" -> {"host": "10.0.0.1", "port": 2222, "user": "admin"}`
 
 const systemPromptCommand = `You are Sherlock, an AI assistant for SSH remote operations.
 Your task is to translate natural language requests into shell commands.
@@ -146,8 +151,6 @@ func (a *Agent) ParseConnectionRequest(ctx context.Context, request string) (*Co
 
 // parseConnectionDirect tries to parse common connection patterns directly.
 func parseConnectionDirect(request string) *ConnectionInfo {
-	request = strings.ToLower(request)
-
 	// Pattern: user@host:port
 	userHostPortRe := regexp.MustCompile(`([a-zA-Z0-9_-]+)@([a-zA-Z0-9.-]+):(\d+)`)
 	if matches := userHostPortRe.FindStringSubmatch(request); len(matches) == 4 {
@@ -166,6 +169,20 @@ func parseConnectionDirect(request string) *ConnectionInfo {
 			User: matches[1],
 			Host: matches[2],
 			Port: 22,
+		}
+	}
+
+	// Pattern: just an IP address (e.g., "connect 192.168.40.22" or "连接192.168.40.22")
+	// Default user is "root"
+	ipPattern := regexp.MustCompile(`\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b`)
+	if matches := ipPattern.FindStringSubmatch(request); len(matches) == 2 {
+		// Validate that the IP is actually valid
+		if net.ParseIP(matches[1]) != nil {
+			return &ConnectionInfo{
+				Host: matches[1],
+				Port: 22,
+				User: "root",
+			}
 		}
 	}
 

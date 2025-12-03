@@ -15,10 +15,12 @@
 package ai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"runtime/debug"
 	"time"
@@ -274,7 +276,7 @@ func (m *OpenAIChatModel) doRequest(ctx context.Context, req *openAIChatRequest)
 	}
 
 	apiURL := m.config.BaseURL + "/chat/completions"
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, &bodyReader{data: reqBody})
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -307,7 +309,7 @@ func (m *OpenAIChatModel) doStreamRequest(ctx context.Context, req *openAIChatRe
 	}
 
 	apiURL := m.config.BaseURL + "/chat/completions"
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, &bodyReader{data: reqBody})
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(reqBody))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -329,7 +331,7 @@ func (m *OpenAIChatModel) doStreamRequest(ctx context.Context, req *openAIChatRe
 	for {
 		var chatResp openAIStreamResponse
 		if err := decoder.Decode(&chatResp); err != nil {
-			if err.Error() == "EOF" {
+			if err == io.EOF {
 				break
 			}
 			return fmt.Errorf("failed to decode response: %w", err)

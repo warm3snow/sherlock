@@ -15,10 +15,12 @@
 package ai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"runtime/debug"
@@ -269,18 +271,12 @@ func (m *OllamaChatModel) doRequest(ctx context.Context, req *ollamaChatRequest)
 	}
 
 	apiURL := m.baseURL.JoinPath("/api/chat").String()
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Body = http.NoBody
-	httpReq.ContentLength = int64(len(reqBody))
-	httpReq.GetBody = func() (rc interface{ Close() error; Read(p []byte) (n int, err error) }, e error) {
-		return &bodyReader{data: reqBody}, nil
-	}
-	httpReq.Body = &bodyReader{data: reqBody}
 
 	resp, err := m.httpClient.Do(httpReq)
 	if err != nil {
@@ -307,7 +303,7 @@ func (m *OllamaChatModel) doStreamRequest(ctx context.Context, req *ollamaChatRe
 	}
 
 	apiURL := m.baseURL.JoinPath("/api/chat").String()
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, &bodyReader{data: reqBody})
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(reqBody))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -328,7 +324,7 @@ func (m *OllamaChatModel) doStreamRequest(ctx context.Context, req *ollamaChatRe
 	for {
 		var chatResp ollamaChatResponse
 		if err := decoder.Decode(&chatResp); err != nil {
-			if err.Error() == "EOF" {
+			if err == io.EOF {
 				break
 			}
 			return fmt.Errorf("failed to decode response: %w", err)
@@ -358,25 +354,6 @@ func (m *OllamaChatModel) IsCallbacksEnabled() bool {
 
 // BindTools binds tools to the model (not implemented for basic chat).
 func (m *OllamaChatModel) BindTools(_ []*schema.ToolInfo) error {
-	return nil
-}
-
-// bodyReader implements io.ReadCloser for request body.
-type bodyReader struct {
-	data   []byte
-	offset int
-}
-
-func (r *bodyReader) Read(p []byte) (n int, err error) {
-	if r.offset >= len(r.data) {
-		return 0, fmt.Errorf("EOF")
-	}
-	n = copy(p, r.data[r.offset:])
-	r.offset += n
-	return n, nil
-}
-
-func (r *bodyReader) Close() error {
 	return nil
 }
 

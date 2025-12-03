@@ -400,7 +400,7 @@ func isConnectionRequest(input string) bool {
 }
 
 func printBanner() {
-	fmt.Println(`
+	fmt.Print(`
   _____ _    _ ______ _____  _      ____   _____ _  __
  / ____| |  | |  ____|  __ \| |    / __ \ / ____| |/ /
 | (___ | |__| | |__  | |__) | |   | |  | | |    | ' / 
@@ -436,7 +436,7 @@ For more information, visit: https://github.com/warm3snow/Sherlock
 }
 
 func printCommandHelp() {
-	fmt.Println(`
+	fmt.Print(`
 Available commands:
   help                    Show this help message
   exit, quit, q           Exit Sherlock

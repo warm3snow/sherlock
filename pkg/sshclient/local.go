@@ -17,6 +17,7 @@ package sshclient
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"os/user"
@@ -31,7 +32,10 @@ type LocalClient struct {
 
 // NewLocalClient creates a new local client.
 func NewLocalClient() *LocalClient {
-	hostname, _ := os.Hostname()
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "localhost"
+	}
 	username := "unknown"
 	if u, err := user.Current(); err == nil {
 		username = u.Username
@@ -57,7 +61,8 @@ func (c *LocalClient) Execute(ctx context.Context, command string) *ExecuteResul
 	result.Stderr = stderr.String()
 
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			result.ExitCode = exitErr.ExitCode()
 		} else {
 			result.Error = err

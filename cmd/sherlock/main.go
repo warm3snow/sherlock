@@ -20,6 +20,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"regexp"
@@ -333,13 +334,14 @@ func (a *App) connectToHost(host string, port int, user string) error {
 	}
 
 	// Key auth failed, prompt for password
-	fmt.Print("Password: ")
+	fmt.Print("Password (or press Enter to cancel): ")
 	reader := bufio.NewReader(os.Stdin)
 	password, _ := reader.ReadString('\n')
 	password = strings.TrimSpace(password)
 
 	if password == "" {
-		return fmt.Errorf("password is required when key authentication fails")
+		fmt.Println("Connection cancelled.")
+		return nil
 	}
 
 	// Create SSH client with password
@@ -513,10 +515,22 @@ func isConnectionRequest(input string) bool {
 	if strings.Contains(input, "@") {
 		return true
 	}
-	// Check for IP address pattern (supports simple IP like 192.168.40.22)
-	ipPattern := regexp.MustCompile(`\b(\d{1,3}\.){3}\d{1,3}\b`)
-	if ipPattern.MatchString(input) {
+	// Check for valid IP address pattern
+	if containsValidIP(input) {
 		return true
+	}
+	return false
+}
+
+// containsValidIP checks if the input contains a valid IPv4 address.
+func containsValidIP(input string) bool {
+	// Find potential IP address patterns
+	ipPattern := regexp.MustCompile(`\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b`)
+	matches := ipPattern.FindAllString(input, -1)
+	for _, match := range matches {
+		if net.ParseIP(match) != nil {
+			return true
+		}
 	}
 	return false
 }

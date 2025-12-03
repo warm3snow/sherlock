@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"regexp"
 	"strconv"
 	"strings"
@@ -175,10 +176,13 @@ func parseConnectionDirect(request string) *ConnectionInfo {
 	// Default user is "root"
 	ipPattern := regexp.MustCompile(`\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b`)
 	if matches := ipPattern.FindStringSubmatch(request); len(matches) == 2 {
-		return &ConnectionInfo{
-			Host: matches[1],
-			Port: 22,
-			User: "root",
+		// Validate that the IP is actually valid
+		if net.ParseIP(matches[1]) != nil {
+			return &ConnectionInfo{
+				Host: matches[1],
+				Port: 22,
+				User: "root",
+			}
 		}
 	}
 

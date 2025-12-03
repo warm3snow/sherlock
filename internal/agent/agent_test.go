@@ -67,6 +67,16 @@ func TestParseConnectionDirect(t *testing.T) {
 			input:   "show me disk usage",
 			wantNil: true,
 		},
+		{
+			name:    "invalid IP 999.999.999.999",
+			input:   "connect 999.999.999.999",
+			wantNil: true,
+		},
+		{
+			name:    "invalid IP 256.1.1.1",
+			input:   "connect 256.1.1.1",
+			wantNil: true,
+		},
 	}
 
 	for _, tt := range tests {

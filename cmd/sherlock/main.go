@@ -22,12 +22,14 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 
 	"github.com/warm3snow/Sherlock/internal/agent"
 	"github.com/warm3snow/Sherlock/internal/ai"
 	"github.com/warm3snow/Sherlock/internal/config"
+	"github.com/warm3snow/Sherlock/internal/history"
 	"github.com/warm3snow/Sherlock/pkg/sshclient"
 )
 
@@ -39,16 +41,26 @@ const (
 
 // App represents the Sherlock application.
 type App struct {
-	cfg          *config.Config
-	aiClient     ai.ModelClient
-	agent        *agent.Agent
-	sshClient    *sshclient.Client
-	localClient  *sshclient.LocalClient
-	ctx          context.Context
-	cancel       context.CancelFunc
+	cfg            *config.Config
+	aiClient       ai.ModelClient
+	agent          *agent.Agent
+	sshClient      *sshclient.Client
+	historyManager *history.Manager
+  localClient  *sshclient.LocalClient
+	ctx            context.Context
+	cancel         context.CancelFunc
 }
 
 func main() {
+	// Check for subcommands first
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "hosts":
+			handleHostsCommand()
+			return
+		}
+	}
+
 	var (
 		configPath    string
 		showVersion   bool
@@ -142,6 +154,12 @@ func main() {
 	app.aiClient = aiClient
 	app.agent = agent.NewAgent(aiClient)
 
+	// Initialize history manager
+	historyMgr, err := history.NewManager()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to initialize history manager: %v\n", err)
+	}
+	app.historyManager = historyMgr
 	// Initialize local client for local command execution
 	app.localClient = sshclient.NewLocalClient()
 
@@ -200,6 +218,17 @@ func (a *App) handleInput(input string) error {
 	case "status":
 		a.showStatus()
 		return nil
+	case "history":
+		return a.showHistory("")
+	case "hosts":
+		return a.showHosts()
+	}
+
+	// Check for history command with search query
+	if strings.HasPrefix(strings.ToLower(input), "history ") {
+		query := strings.TrimPrefix(input, "history ")
+		query = strings.TrimPrefix(query, "History ")
+		return a.showHistory(query)
 	}
 
 	// Check for special prefixes
@@ -211,6 +240,25 @@ func (a *App) handleInput(input string) error {
 		return a.handleDirectCommand(strings.TrimPrefix(input, "$"))
 	}
 
+	// Check if connected
+	if a.sshClient == nil || !a.sshClient.IsConnected() {
+		// Try to parse as connection request
+		if isConnectionRequest(input) {
+			return a.handleConnect(input)
+		}
+
+		// Check if it's a history query in natural language
+		if isHistoryRequest(input) {
+			return a.handleHistoryRequest(input)
+		}
+
+		// Check if it's a hosts query in natural language
+		if isHostsRequest(input) {
+			return a.showHosts()
+		}
+
+		fmt.Println("Not connected to any host. Use 'connect <host>' or describe a connection.")
+		return nil
 	// Try to parse as connection request first
 	if isConnectionRequest(input) {
 		return a.handleConnect(input)
@@ -221,6 +269,19 @@ func (a *App) handleInput(input string) error {
 }
 
 func (a *App) handleConnect(input string) error {
+	// Check if input is a numeric ID (connect to saved host by ID)
+	trimmedInput := strings.TrimSpace(input)
+	// Handle "connect <id>" pattern
+	if strings.HasPrefix(strings.ToLower(trimmedInput), "connect ") {
+		idStr := strings.TrimSpace(strings.TrimPrefix(strings.ToLower(trimmedInput), "connect "))
+		if id, err := strconv.ParseInt(idStr, 10, 64); err == nil && a.historyManager != nil {
+			record, err := a.historyManager.GetRecordByID(id)
+			if err == nil {
+				return a.connectToHost(record.Host, record.Port, record.User)
+			}
+		}
+	}
+
 	// Parse connection request using AI
 	fmt.Println("Parsing connection request...")
 
@@ -229,46 +290,104 @@ func (a *App) handleConnect(input string) error {
 		return fmt.Errorf("failed to parse connection request: %w", err)
 	}
 
-	fmt.Printf("Connecting to %s@%s:%d...\n", connInfo.User, connInfo.Host, connInfo.Port)
+	return a.connectToHost(connInfo.Host, connInfo.Port, connInfo.User)
+}
 
-	// Prompt for password
-	fmt.Print("Password (leave empty to use SSH key): ")
-	reader := bufio.NewReader(os.Stdin)
-	password, _ := reader.ReadString('\n')
-	password = strings.TrimSpace(password)
+func (a *App) connectToHost(host string, port int, user string) error {
+	fmt.Printf("Connecting to %s@%s:%d...\n", user, host, port)
 
-	// Create SSH client
-	clientCfg := &sshclient.Config{
-		HostInfo:       connInfo.ToHostInfo(),
-		Password:       password,
-		PrivateKeyPath: a.cfg.SSHKey.PrivateKeyPath,
+	// Check if this host has public key added previously
+	hasPubKey := false
+	if a.historyManager != nil {
+		hasPubKey = a.historyManager.HasPubKey(host, port, user)
 	}
 
-	client, err := sshclient.NewClient(clientCfg)
-	if err != nil {
-		return fmt.Errorf("failed to create SSH client: %w", err)
+	hostInfo := &sshclient.HostInfo{
+		Host: host,
+		Port: port,
+		User: user,
 	}
 
-	// Connect
-	if err := client.Connect(a.ctx); err != nil {
-		return fmt.Errorf("failed to connect: %w", err)
+	var password string
+	usedKeyAuth := false
+
+	if hasPubKey {
+		// Try to connect with SSH key first without prompting for password
+		fmt.Println("Attempting key-based authentication...")
+		clientCfg := &sshclient.Config{
+			HostInfo:       hostInfo,
+			PrivateKeyPath: a.cfg.SSHKey.PrivateKeyPath,
+		}
+
+		client, err := sshclient.NewClient(clientCfg)
+		if err == nil {
+			if err := client.Connect(a.ctx); err == nil {
+				// Key auth succeeded
+				usedKeyAuth = true
+				if a.sshClient != nil {
+					_ = a.sshClient.Close()
+				}
+				a.sshClient = client
+				fmt.Printf("Successfully connected to %s using SSH key\n", client.HostInfoString())
+
+				// Update history
+				if a.historyManager != nil {
+					_ = a.historyManager.AddRecord(host, port, user, true)
+				}
+				return nil
+			}
+			// Key auth failed, will fall through to password prompt
+			fmt.Println("Key authentication failed, falling back to password...")
+		}
 	}
 
-	// Close existing connection if any
-	if a.sshClient != nil {
-		_ = a.sshClient.Close()
-	}
+	if !usedKeyAuth {
+		// Prompt for password
+		fmt.Print("Password (leave empty to use SSH key): ")
+		reader := bufio.NewReader(os.Stdin)
+		password, _ = reader.ReadString('\n')
+		password = strings.TrimSpace(password)
 
-	a.sshClient = client
-	fmt.Printf("Successfully connected to %s\n", client.HostInfoString())
+		// Create SSH client
+		clientCfg := &sshclient.Config{
+			HostInfo:       hostInfo,
+			Password:       password,
+			PrivateKeyPath: a.cfg.SSHKey.PrivateKeyPath,
+		}
 
-	// Optionally add public key to authorized_keys
-	if a.cfg.SSHKey.AutoAddToRemote && password != "" {
-		fmt.Println("Adding public key to remote authorized_keys...")
-		if err := client.AddPublicKeyToAuthorizedKeys(a.ctx, a.cfg.SSHKey.PublicKeyPath); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to add public key: %v\n", err)
-		} else {
-			fmt.Println("Public key added successfully. Future connections can use key authentication.")
+		client, err := sshclient.NewClient(clientCfg)
+		if err != nil {
+			return fmt.Errorf("failed to create SSH client: %w", err)
+		}
+
+		// Connect
+		if err := client.Connect(a.ctx); err != nil {
+			return fmt.Errorf("failed to connect: %w", err)
+		}
+
+		// Close existing connection if any
+		if a.sshClient != nil {
+			_ = a.sshClient.Close()
+		}
+
+		a.sshClient = client
+		fmt.Printf("Successfully connected to %s\n", client.HostInfoString())
+
+		// Optionally add public key to authorized_keys
+		pubKeyAdded := false
+		if a.cfg.SSHKey.AutoAddToRemote && password != "" {
+			fmt.Println("Adding public key to remote authorized_keys...")
+			if err := client.AddPublicKeyToAuthorizedKeys(a.ctx, a.cfg.SSHKey.PublicKeyPath); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: Failed to add public key: %v\n", err)
+			} else {
+				fmt.Println("Public key added successfully. Future connections can use key authentication.")
+				pubKeyAdded = true
+			}
+		}
+
+		// Update history
+		if a.historyManager != nil {
+			_ = a.historyManager.AddRecord(host, port, user, pubKeyAdded)
 		}
 	}
 
@@ -383,6 +502,9 @@ func (a *App) cleanup() {
 	if a.aiClient != nil {
 		_ = a.aiClient.Close()
 	}
+	if a.historyManager != nil {
+		_ = a.historyManager.Close()
+	}
 	a.cancel()
 }
 
@@ -401,6 +523,86 @@ func isConnectionRequest(input string) bool {
 	return false
 }
 
+func isHistoryRequest(input string) bool {
+	lower := strings.ToLower(input)
+	keywords := []string{"history", "历史", "登录记录", "login history", "connection history", "show history", "list history", "查看历史", "显示历史"}
+	for _, kw := range keywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+func isHostsRequest(input string) bool {
+	lower := strings.ToLower(input)
+	keywords := []string{"hosts", "主机", "服务器", "saved hosts", "show hosts", "list hosts", "查看主机", "显示主机", "all hosts"}
+	for _, kw := range keywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *App) showHistory(query string) error {
+	if a.historyManager == nil {
+		fmt.Println("History feature is not available.")
+		return nil
+	}
+
+	var records []history.Record
+	if query == "" {
+		records = a.historyManager.GetRecords()
+	} else {
+		records = a.historyManager.SearchRecords(query)
+	}
+
+	fmt.Print(history.FormatRecords(records))
+	return nil
+}
+
+func (a *App) showHosts() error {
+	if a.historyManager == nil {
+		fmt.Println("Hosts feature is not available.")
+		return nil
+	}
+
+	records := a.historyManager.GetRecords()
+	fmt.Print(history.FormatHostsSimple(records))
+	return nil
+}
+
+func (a *App) handleHistoryRequest(input string) error {
+	// Extract any search query from the natural language input
+	lower := strings.ToLower(input)
+
+	// Try to extract a search term
+	searchPrefixes := []string{"search for ", "find ", "query ", "look for ", "搜索", "查找"}
+	var query string
+	for _, prefix := range searchPrefixes {
+		if idx := strings.Index(lower, prefix); idx != -1 {
+			query = strings.TrimSpace(input[idx+len(prefix):])
+			break
+		}
+	}
+
+	return a.showHistory(query)
+}
+
+// handleHostsCommand handles the 'sherlock hosts' subcommand.
+func handleHostsCommand() {
+	historyMgr, err := history.NewManager()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: Failed to initialize history manager: %v\n", err)
+		os.Exit(1)
+	}
+	defer historyMgr.Close()
+
+	records := historyMgr.GetRecords()
+	fmt.Print(history.FormatHostsSimple(records))
+}
+
 func printBanner() {
 	fmt.Print(`
   _____ _    _ ______ _____  _      ____   _____ _  __
@@ -417,7 +619,10 @@ AI-powered SSH Remote Operations Tool
 func printHelp() {
 	fmt.Printf(`%s - %s
 
-Usage: sherlock [options]
+Usage: sherlock [options] [command]
+
+Commands:
+  hosts                   Show all saved hosts
 
 Options:
   -c, --config <path>     Path to configuration file
@@ -430,6 +635,7 @@ Options:
 
 Examples:
   sherlock                           Start interactive mode with default config
+  sherlock hosts                     Show all saved hosts
   sherlock --provider ollama         Use Ollama as LLM provider
   sherlock -c ~/.config/sherlock/config.json
 
@@ -443,12 +649,26 @@ Available commands:
   help                    Show this help message
   exit, quit, q           Exit Sherlock
   status                  Show current status
+  hosts                   Show all saved hosts
+  history                 Show login history
+  history <query>         Search login history
   disconnect              Disconnect from remote host (switch to local mode)
 
 Connection:
   connect <host>          Connect to a remote host
+  connect <id>            Connect to a saved host by ID
   ssh user@host:port      Connect using SSH-like syntax
   Or describe in natural language, e.g., "connect to server 192.168.1.100 as root"
+  Note: If you have logged in before with SSH key, no password will be required.
+
+Hosts:
+  hosts                   Show all saved hosts with IDs
+  Or use natural language, e.g., "show my hosts" or "显示主机"
+
+History:
+  history                 Show all login history
+  history <query>         Search history by host, user, or pattern
+  Or use natural language, e.g., "show my login history"
 
 Commands (local or remote):
   $<command>              Execute a command directly, e.g., $ls -la

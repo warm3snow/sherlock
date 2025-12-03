@@ -93,10 +93,21 @@ Sherlock uses a JSON configuration file. The default location is `~/.config/sher
 sherlock
 ```
 
+#### Show Saved Hosts
+
+```bash
+sherlock hosts
+```
+
+This shows all previously connected hosts. You can then connect using `connect <id>`.
+
 #### Command Line Options
 
 ```bash
-sherlock [options]
+sherlock [options] [command]
+
+Commands:
+  hosts                   Show all saved hosts
 
 Options:
   -c, --config <path>     Path to configuration file
@@ -116,11 +127,18 @@ help                    Show help message
 exit, quit, q           Exit Sherlock
 status                  Show current status
 disconnect              Disconnect from current host
+hosts                   Show all saved hosts
+history                 Show login history
 
 # Connection (natural language)
 connect to 192.168.1.100 as root
 ssh user@example.com:2222
 login to server 10.0.0.1 port 2222 as admin
+connect 1                 Connect to saved host by ID
+
+# Hosts (natural language)
+show my hosts             Show all saved hosts
+显示主机                   Show all saved hosts (Chinese)
 
 # Execute commands (when connected)
 $ls -la                 Execute command directly
@@ -277,10 +295,21 @@ Sherlock 使用 JSON 配置文件，默认位置为 `~/.config/sherlock/config.j
 sherlock
 ```
 
+#### 查看已保存的主机
+
+```bash
+sherlock hosts
+```
+
+显示所有之前连接过的主机。然后可以使用 `connect <id>` 快速连接。
+
 #### 命令行选项
 
 ```bash
-sherlock [选项]
+sherlock [选项] [命令]
+
+命令:
+  hosts                   显示所有已保存的主机
 
 选项:
   -c, --config <路径>     配置文件路径
@@ -300,11 +329,18 @@ help                    显示帮助信息
 exit, quit, q           退出 Sherlock
 status                  显示当前状态
 disconnect              断开当前连接
+hosts                   显示所有已保存的主机
+history                 显示登录历史
 
 # 连接 (自然语言)
 连接到 192.168.1.100 用户名 root
 ssh user@example.com:2222
 以 admin 身份登录服务器 10.0.0.1 端口 2222
+connect 1               通过 ID 连接到已保存的主机
+
+# 主机 (自然语言)
+显示主机                 显示所有已保存的主机
+show my hosts           显示所有已保存的主机
 
 # 执行命令 (连接后)
 $ls -la                 直接执行命令

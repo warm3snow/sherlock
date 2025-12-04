@@ -101,14 +101,40 @@ type Config struct {
 	PrivateKeyPassphrase string
 	// Timeout is the connection timeout.
 	Timeout time.Duration
+	// StrictHostKeyChecking enables strict host key checking (like SSH).
+	// When true, connections to unknown hosts are rejected.
+	// When false (default), unknown hosts are accepted but changed keys are rejected.
+	StrictHostKeyChecking bool
+	// UseSSHConfig enables reading SSH config file (~/.ssh/config) for host settings.
+	// Default is true.
+	UseSSHConfig *bool
 }
 
 // NewClient creates a new SSH client with the given configuration.
+// It follows SSH-like behavior:
+// 1. Reads ~/.ssh/config for host-specific settings (user, port, identity files)
+// 2. Tries SSH agent authentication first
+// 3. Tries public key authentication with configured and default keys
+// 4. Falls back to password authentication if provided
+// 5. Uses ~/.ssh/known_hosts for host key verification
 func NewClient(cfg *Config) (*Client, error) {
 	if cfg.HostInfo == nil {
 		return nil, errors.New("host info is required")
 	}
-	if cfg.HostInfo.User == "" {
+
+	// Apply SSH config settings if enabled (default: true)
+	useSSHConfig := cfg.UseSSHConfig == nil || *cfg.UseSSHConfig
+	hostInfo := cfg.HostInfo
+	var sshConfigIdentityFiles []string
+
+	if useSSHConfig {
+		sshConfig, err := ParseSSHConfig()
+		if err == nil {
+			hostInfo, sshConfigIdentityFiles = applySSHConfig(sshConfig, cfg.HostInfo)
+		}
+	}
+
+	if hostInfo.User == "" {
 		return nil, errors.New("user is required")
 	}
 
@@ -120,6 +146,14 @@ func NewClient(cfg *Config) (*Client, error) {
 	if agentAuth != nil {
 		authMethods = append(authMethods, agentAuth)
 		agentConn = conn
+	}
+
+	// Try public key authentication with identity files from SSH config
+	for _, keyPath := range sshConfigIdentityFiles {
+		keyAuth, err := publicKeyAuth(keyPath, "")
+		if err == nil {
+			authMethods = append(authMethods, keyAuth)
+		}
 	}
 
 	// Try public key authentication with specified key path
@@ -134,6 +168,17 @@ func NewClient(cfg *Config) (*Client, error) {
 	for _, keyPath := range GetDefaultKeyPaths() {
 		if keyPath == cfg.PrivateKeyPath {
 			continue // Skip if already tried
+		}
+		// Skip if already tried from SSH config
+		skip := false
+		for _, configPath := range sshConfigIdentityFiles {
+			if keyPath == configPath {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
 		}
 		keyAuth, err := publicKeyAuth(keyPath, "")
 		if err == nil {
@@ -159,18 +204,54 @@ func NewClient(cfg *Config) (*Client, error) {
 		timeout = 30 * time.Second
 	}
 
+	// Create host key callback using known_hosts file
+	hostKeyCallback := CreateHostKeyCallback(cfg.StrictHostKeyChecking)
+
 	sshConfig := &ssh.ClientConfig{
-		User:            cfg.HostInfo.User,
+		User:            hostInfo.User,
 		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // TODO: Implement proper host key verification
+		HostKeyCallback: hostKeyCallback,
 		Timeout:         timeout,
 	}
 
 	return &Client{
-		hostInfo:  cfg.HostInfo,
+		hostInfo:  hostInfo,
 		sshConfig: sshConfig,
 		agentConn: agentConn,
 	}, nil
+}
+
+// applySSHConfig applies settings from SSH config file to the host info.
+// It returns the updated host info and identity files to try.
+func applySSHConfig(sshConfig *SSHConfig, hostInfo *HostInfo) (*HostInfo, []string) {
+	configHost := sshConfig.GetHost(hostInfo.Host)
+	if configHost == nil {
+		return hostInfo, nil
+	}
+
+	// Create a copy of hostInfo to avoid modifying the original
+	result := &HostInfo{
+		Host: hostInfo.Host,
+		Port: hostInfo.Port,
+		User: hostInfo.User,
+	}
+
+	// Apply hostname from config if available (for aliases)
+	if configHost.Hostname != "" {
+		result.Host = configHost.Hostname
+	}
+
+	// Apply port from config if not already specified
+	if hostInfo.Port == 22 && configHost.Port != 22 {
+		result.Port = configHost.Port
+	}
+
+	// Apply user from config if not already specified
+	if hostInfo.User == "" && configHost.User != "" {
+		result.User = configHost.User
+	}
+
+	return result, configHost.IdentityFile
 }
 
 // sshAgentAuth creates an ssh.AuthMethod from the SSH agent.

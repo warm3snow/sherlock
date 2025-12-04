@@ -280,10 +280,6 @@ func isDangerousCommand(input string) bool {
 	}
 
 	parts := strings.Fields(input)
-	if len(parts) == 0 {
-		return false
-	}
-
 	cmdName := strings.ToLower(parts[0])
 
 	// O(1) lookup using map
@@ -300,10 +296,6 @@ func IsShellCommand(input string) bool {
 
 	// Get the first word (command name)
 	parts := strings.Fields(input)
-	if len(parts) == 0 {
-		return false
-	}
-
 	cmdName := strings.ToLower(parts[0])
 
 	// O(1) lookup using map
@@ -312,6 +304,7 @@ func IsShellCommand(input string) bool {
 	}
 
 	// Check for commands with path prefix (e.g., /usr/bin/ls, ./script.sh)
+	// This allows users to run local scripts directly without LLM translation
 	if strings.HasPrefix(input, "/") || strings.HasPrefix(input, "./") || strings.HasPrefix(input, "../") {
 		return true
 	}
@@ -328,9 +321,14 @@ func parseCommandDirect(request string) *CommandInfo {
 
 	// Check if it's a shell command
 	if IsShellCommand(cmd) {
+		// Generate a more descriptive message based on the command
+		parts := strings.Fields(cmd)
+		cmdName := parts[0]
+		description := fmt.Sprintf("Execute: %s", cmdName)
+
 		return &CommandInfo{
 			Commands:     []string{cmd},
-			Description:  "Direct shell command execution",
+			Description:  description,
 			NeedsConfirm: isDangerousCommand(cmd),
 		}
 	}

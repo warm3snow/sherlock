@@ -308,9 +308,12 @@ func (a *App) connectToHost(host string, port int, user string) error {
 		PrivateKeyPath: a.cfg.SSHKey.PrivateKeyPath,
 	}
 
+	var keyAuthErr error
 	client, err := sshclient.NewClient(clientCfg)
-	if err == nil {
-		if err := client.Connect(a.ctx); err == nil {
+	if err != nil {
+		keyAuthErr = err
+	} else {
+		if connectErr := client.Connect(a.ctx); connectErr == nil {
 			// Key auth succeeded
 			if a.sshClient != nil {
 				_ = a.sshClient.Close()
@@ -323,10 +326,18 @@ func (a *App) connectToHost(host string, port int, user string) error {
 				_ = a.historyManager.AddRecord(host, port, user, true)
 			}
 			return nil
+		} else {
+			keyAuthErr = connectErr
 		}
-		// Key auth failed, will fall through to password prompt
-		fmt.Println("Key authentication failed, falling back to password...")
 	}
+
+	// Key auth failed, show the error and fall through to password prompt
+	if keyAuthErr != nil {
+		fmt.Printf("Key authentication failed: %v\n", keyAuthErr)
+	} else {
+		fmt.Println("Key authentication failed")
+	}
+	fmt.Println("Falling back to password authentication...")
 
 	// Key auth failed, prompt for password
 	fmt.Print("Password (or press Enter to cancel): ")

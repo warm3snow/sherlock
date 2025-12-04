@@ -106,6 +106,17 @@ func main() {
 		cfg = config.DefaultConfig()
 	}
 
+	// Check if SSH keys are configured, if not try auto-detection
+	if cfg.SSHKey.PrivateKeyPath == "" || cfg.SSHKey.PublicKeyPath == "" {
+		if keyPair, found := config.DetectSSHKeys(); found {
+			cfg.SSHKey.PrivateKeyPath = keyPair.PrivateKeyPath
+			cfg.SSHKey.PublicKeyPath = keyPair.PublicKeyPath
+		} else {
+			fmt.Fprintln(os.Stderr, "Warning: No SSH keys found in ~/.ssh/ (tried id_ed25519 and id_rsa).")
+			fmt.Fprintln(os.Stderr, "         Password authentication will be used for SSH connections.")
+		}
+	}
+
 	// Override config with command line flags
 	if providerFlag != "" {
 		cfg.LLM.Provider = config.LLMProviderType(providerFlag)

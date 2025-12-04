@@ -78,6 +78,36 @@ func TestSshAgentAuth(t *testing.T) {
 	}
 }
 
+func TestGetAgentSigners(t *testing.T) {
+	// Test when SSH_AUTH_SOCK is not set
+	originalSocket := os.Getenv("SSH_AUTH_SOCK")
+	os.Unsetenv("SSH_AUTH_SOCK")
+	defer func() {
+		if originalSocket != "" {
+			os.Setenv("SSH_AUTH_SOCK", originalSocket)
+		}
+	}()
+
+	signers, conn := getAgentSigners()
+	if len(signers) != 0 {
+		t.Error("getAgentSigners should return empty slice when SSH_AUTH_SOCK is not set")
+	}
+	if conn != nil {
+		t.Error("getAgentSigners should return nil conn when SSH_AUTH_SOCK is not set")
+	}
+}
+
+func TestLoadPrivateKey(t *testing.T) {
+	// Test with non-existent file
+	_, err := loadPrivateKey("/nonexistent/path/to/key", "")
+	if err == nil {
+		t.Error("loadPrivateKey should return error for non-existent file")
+	}
+	if !strings.Contains(err.Error(), "failed to read private key") {
+		t.Errorf("Unexpected error message: %v", err)
+	}
+}
+
 func TestNewClientWithoutAuthMethods(t *testing.T) {
 	// Create a temporary directory for testing
 	tmpDir := t.TempDir()

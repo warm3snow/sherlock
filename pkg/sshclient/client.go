@@ -141,50 +141,61 @@ func NewClient(cfg *Config) (*Client, error) {
 	var authMethods []ssh.AuthMethod
 	var agentConn net.Conn
 
+	// Collect all signers into a single slice to avoid multiple auth attempts
+	// This prevents exceeding MaxAuthTries on the server side
+	var allSigners []ssh.Signer
+
 	// Track already-tried key paths to avoid duplicates (O(1) lookup)
 	triedPaths := make(map[string]bool)
 
-	// Try SSH agent authentication first (highest priority)
-	agentAuth, conn := sshAgentAuth()
-	if agentAuth != nil {
-		authMethods = append(authMethods, agentAuth)
+	// Get signers from SSH agent first (highest priority)
+	agentSigners, conn := getAgentSigners()
+	if len(agentSigners) > 0 {
+		allSigners = append(allSigners, agentSigners...)
 		agentConn = conn
 	}
 
-	// Try public key authentication with identity files from SSH config
+	// Get signers from identity files in SSH config
 	for _, keyPath := range sshConfigIdentityFiles {
 		if triedPaths[keyPath] {
 			continue
 		}
-		keyAuth, err := publicKeyAuth(keyPath, "")
+		signer, err := loadPrivateKey(keyPath, "")
 		if err == nil {
-			authMethods = append(authMethods, keyAuth)
+			allSigners = append(allSigners, signer)
 			triedPaths[keyPath] = true
 		}
 	}
 
-	// Try public key authentication with specified key path
+	// Get signer from specified key path
 	if cfg.PrivateKeyPath != "" && !triedPaths[cfg.PrivateKeyPath] {
-		keyAuth, err := publicKeyAuth(cfg.PrivateKeyPath, cfg.PrivateKeyPassphrase)
+		signer, err := loadPrivateKey(cfg.PrivateKeyPath, cfg.PrivateKeyPassphrase)
 		if err == nil {
-			authMethods = append(authMethods, keyAuth)
+			allSigners = append(allSigners, signer)
 			triedPaths[cfg.PrivateKeyPath] = true
 		}
 	}
 
-	// Try default SSH key paths (always try to add more auth methods)
+	// Get signers from default SSH key paths
 	for _, keyPath := range GetDefaultKeyPaths() {
 		if triedPaths[keyPath] {
 			continue
 		}
-		keyAuth, err := publicKeyAuth(keyPath, "")
+		signer, err := loadPrivateKey(keyPath, "")
 		if err == nil {
-			authMethods = append(authMethods, keyAuth)
+			allSigners = append(allSigners, signer)
 			triedPaths[keyPath] = true
 		}
 	}
 
-	// Add password authentication if provided
+	// Add a single public key auth method with all signers combined
+	// This ensures all keys are tried within a single authentication attempt,
+	// avoiding MaxAuthTries limits on the server
+	if len(allSigners) > 0 {
+		authMethods = append(authMethods, ssh.PublicKeys(allSigners...))
+	}
+
+	// Add password authentication if provided (as a separate method)
 	if cfg.Password != "" {
 		authMethods = append(authMethods, ssh.Password(cfg.Password))
 	}
@@ -254,7 +265,18 @@ func applySSHConfig(sshConfig *SSHConfig, hostInfo *HostInfo) (*HostInfo, []stri
 
 // sshAgentAuth creates an ssh.AuthMethod from the SSH agent.
 // It returns the auth method and the connection to the agent (which should be closed when done).
+// Deprecated: Use getAgentSigners instead for consolidated key handling.
 func sshAgentAuth() (ssh.AuthMethod, net.Conn) {
+	signers, conn := getAgentSigners()
+	if len(signers) == 0 {
+		return nil, nil
+	}
+	return ssh.PublicKeys(signers...), conn
+}
+
+// getAgentSigners retrieves all signers from the SSH agent.
+// It returns the signers and the connection to the agent (which should be closed when done).
+func getAgentSigners() ([]ssh.Signer, net.Conn) {
 	socket := os.Getenv("SSH_AUTH_SOCK")
 	if socket == "" {
 		return nil, nil
@@ -266,11 +288,27 @@ func sshAgentAuth() (ssh.AuthMethod, net.Conn) {
 	}
 
 	agentClient := agent.NewClient(conn)
-	return ssh.PublicKeysCallback(agentClient.Signers), conn
+	signers, err := agentClient.Signers()
+	if err != nil {
+		conn.Close()
+		return nil, nil
+	}
+
+	return signers, conn
 }
 
 // publicKeyAuth creates an ssh.AuthMethod from a private key file.
+// Deprecated: Use loadPrivateKey instead for consolidated key handling.
 func publicKeyAuth(keyPath, passphrase string) (ssh.AuthMethod, error) {
+	signer, err := loadPrivateKey(keyPath, passphrase)
+	if err != nil {
+		return nil, err
+	}
+	return ssh.PublicKeys(signer), nil
+}
+
+// loadPrivateKey loads a private key from a file and returns an ssh.Signer.
+func loadPrivateKey(keyPath, passphrase string) (ssh.Signer, error) {
 	keyData, err := os.ReadFile(keyPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read private key: %w", err)
@@ -286,7 +324,7 @@ func publicKeyAuth(keyPath, passphrase string) (ssh.AuthMethod, error) {
 		return nil, fmt.Errorf("failed to parse private key: %w", err)
 	}
 
-	return ssh.PublicKeys(signer), nil
+	return signer, nil
 }
 
 // Connect establishes the SSH connection.

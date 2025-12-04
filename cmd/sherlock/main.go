@@ -32,6 +32,7 @@ import (
 	"github.com/warm3snow/Sherlock/internal/ai"
 	"github.com/warm3snow/Sherlock/internal/config"
 	"github.com/warm3snow/Sherlock/internal/history"
+	"github.com/warm3snow/Sherlock/internal/theme"
 	"github.com/warm3snow/Sherlock/pkg/sshclient"
 )
 
@@ -49,6 +50,7 @@ type App struct {
 	sshClient      *sshclient.Client
 	historyManager *history.Manager
 	localClient    *sshclient.LocalClient
+	theme          *theme.Theme
 	ctx            context.Context
 	cancel         context.CancelFunc
 	sigChan        chan os.Signal
@@ -146,6 +148,7 @@ func main() {
 		ctx:     ctx,
 		cancel:  cancel,
 		sigChan: sigChan,
+		theme:   theme.GetTheme(cfg.UI.Theme),
 	}
 
 	// Handle signals:
@@ -200,17 +203,20 @@ func main() {
 }
 
 func (a *App) run() error {
-	printBanner()
-	fmt.Println("Type 'help' for available commands or describe what you want to do.")
+	a.printBanner()
+	fmt.Println(a.theme.FormatInfo("Type 'help' for available commands or describe what you want to do."))
 	fmt.Println()
 
 	reader := bufio.NewReader(os.Stdin)
 
 	for {
-		prompt := fmt.Sprintf("sherlock[%s]> ", a.localClient.HostInfoString())
+		var hostStr string
 		if a.sshClient != nil && a.sshClient.IsConnected() {
-			prompt = fmt.Sprintf("sherlock[%s]> ", a.sshClient.HostInfoString())
+			hostStr = a.sshClient.HostInfoString()
+		} else {
+			hostStr = a.localClient.HostInfoString()
 		}
+		prompt := a.theme.FormatPrompt("sherlock[", hostStr, "]> ")
 
 		fmt.Print(prompt)
 		input, err := reader.ReadString('\n')
@@ -224,7 +230,7 @@ func (a *App) run() error {
 		}
 
 		if err := a.handleInput(input); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "%s\n", a.theme.FormatError("Error: "+err.Error()))
 		}
 	}
 }
@@ -233,7 +239,7 @@ func (a *App) handleInput(input string) error {
 	// Handle built-in commands
 	switch strings.ToLower(input) {
 	case "help":
-		printCommandHelp()
+		a.printCommandHelp()
 		return nil
 	case "exit", "quit", "q":
 		a.cleanup()
@@ -300,7 +306,7 @@ func (a *App) handleConnect(input string) error {
 	}
 
 	// Parse connection request using AI
-	fmt.Println("Parsing connection request...")
+	fmt.Println(a.theme.FormatInfo("Parsing connection request..."))
 
 	connInfo, err := a.agent.ParseConnectionRequest(a.ctx, input)
 	if err != nil {
@@ -311,7 +317,7 @@ func (a *App) handleConnect(input string) error {
 }
 
 func (a *App) connectToHost(host string, port int, user string) error {
-	fmt.Printf("Connecting to %s@%s:%d...\n", user, host, port)
+	fmt.Printf("%s %s@%s:%d...\n", a.theme.FormatInfo("Connecting to"), user, host, port)
 
 	hostInfo := &sshclient.HostInfo{
 		Host: host,
@@ -320,7 +326,7 @@ func (a *App) connectToHost(host string, port int, user string) error {
 	}
 
 	// Always try key-based authentication first
-	fmt.Println("Attempting key-based authentication...")
+	fmt.Println(a.theme.FormatInfo("Attempting key-based authentication..."))
 	clientCfg := &sshclient.Config{
 		HostInfo:       hostInfo,
 		PrivateKeyPath: a.cfg.SSHKey.PrivateKeyPath,
@@ -337,7 +343,7 @@ func (a *App) connectToHost(host string, port int, user string) error {
 				_ = a.sshClient.Close()
 			}
 			a.sshClient = client
-			fmt.Printf("Successfully connected to %s using SSH key\n", client.HostInfoString())
+			fmt.Printf("%s %s\n", a.theme.FormatSuccess("Successfully connected to"), client.HostInfoString()+" using SSH key")
 
 			// Update history
 			if a.historyManager != nil {
@@ -351,20 +357,20 @@ func (a *App) connectToHost(host string, port int, user string) error {
 
 	// Key auth failed, show the error and fall through to password prompt
 	if keyAuthErr != nil {
-		fmt.Printf("Key authentication failed: %v\n", keyAuthErr)
+		fmt.Printf("%s %v\n", a.theme.FormatWarning("Key authentication failed:"), keyAuthErr)
 	} else {
-		fmt.Println("Key authentication failed")
+		fmt.Println(a.theme.FormatWarning("Key authentication failed"))
 	}
-	fmt.Println("Falling back to password authentication...")
+	fmt.Println(a.theme.FormatInfo("Falling back to password authentication..."))
 
 	// Key auth failed, prompt for password
-	fmt.Print("Password (or press Enter to cancel): ")
+	fmt.Print(a.theme.FormatInfo("Password (or press Enter to cancel): "))
 	reader := bufio.NewReader(os.Stdin)
 	password, _ := reader.ReadString('\n')
 	password = strings.TrimSpace(password)
 
 	if password == "" {
-		fmt.Println("Connection cancelled.")
+		fmt.Println(a.theme.FormatInfo("Connection cancelled."))
 		return nil
 	}
 
@@ -391,16 +397,16 @@ func (a *App) connectToHost(host string, port int, user string) error {
 	}
 
 	a.sshClient = client
-	fmt.Printf("Successfully connected to %s\n", client.HostInfoString())
+	fmt.Printf("%s %s\n", a.theme.FormatSuccess("Successfully connected to"), client.HostInfoString())
 
 	// Optionally add public key to authorized_keys
 	pubKeyAdded := false
 	if a.cfg.SSHKey.AutoAddToRemote {
-		fmt.Println("Adding public key to remote authorized_keys...")
+		fmt.Println(a.theme.FormatInfo("Adding public key to remote authorized_keys..."))
 		if err := client.AddPublicKeyToAuthorizedKeys(a.ctx, a.cfg.SSHKey.PublicKeyPath); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to add public key: %v\n", err)
+			fmt.Fprintf(os.Stderr, "%s %v\n", a.theme.FormatWarning("Warning: Failed to add public key:"), err)
 		} else {
-			fmt.Println("Public key added successfully. Future connections can use key authentication.")
+			fmt.Println(a.theme.FormatSuccess("Public key added successfully. Future connections can use key authentication."))
 			pubKeyAdded = true
 		}
 	}
@@ -429,27 +435,27 @@ func (a *App) handleCommandRequest(input string) error {
 		return fmt.Errorf("failed to parse command request: %w", err)
 	}
 
-	fmt.Printf("Commands to execute:\n")
+	fmt.Printf("%s\n", a.theme.FormatTableHeader("Commands to execute:"))
 	for i, cmd := range cmdInfo.Commands {
-		fmt.Printf("  %d. %s\n", i+1, cmd)
+		fmt.Printf("  %d. %s\n", i+1, a.theme.FormatCommand(cmd))
 	}
-	fmt.Printf("Description: %s\n", cmdInfo.Description)
+	fmt.Printf("%s %s\n", a.theme.FormatInfo("Description:"), a.theme.FormatDescription(cmdInfo.Description))
 
 	// Confirm if needed
 	if cmdInfo.NeedsConfirm {
-		fmt.Print("\n⚠️  This operation may be dangerous. Continue? [y/N]: ")
+		fmt.Print("\n" + a.theme.FormatWarning("⚠️  This operation may be dangerous. Continue? [y/N]: "))
 		reader := bufio.NewReader(os.Stdin)
 		confirm, _ := reader.ReadString('\n')
 		confirm = strings.TrimSpace(strings.ToLower(confirm))
 		if confirm != "y" && confirm != "yes" {
-			fmt.Println("Operation cancelled.")
+			fmt.Println(a.theme.FormatInfo("Operation cancelled."))
 			return nil
 		}
 	}
 
 	// Execute commands
 	for _, cmd := range cmdInfo.Commands {
-		fmt.Printf("\n$ %s\n", cmd)
+		fmt.Printf("\n%s %s\n", a.theme.FormatInfo("$"), a.theme.FormatCommand(cmd))
 		if err := a.executeCommand(cmd); err != nil {
 			return err
 		}
@@ -502,15 +508,16 @@ func (a *App) disconnect() error {
 }
 
 func (a *App) showStatus() {
-	fmt.Println("=== Sherlock Status ===")
-	fmt.Printf("Version: %s\n", version)
-	fmt.Printf("LLM Provider: %s\n", a.cfg.LLM.Provider)
-	fmt.Printf("LLM Model: %s\n", a.cfg.LLM.Model)
+	fmt.Println(a.theme.FormatTableHeader("=== Sherlock Status ==="))
+	fmt.Printf("%s %s\n", a.theme.FormatInfo("Version:"), version)
+	fmt.Printf("%s %s\n", a.theme.FormatInfo("LLM Provider:"), a.cfg.LLM.Provider)
+	fmt.Printf("%s %s\n", a.theme.FormatInfo("LLM Model:"), a.cfg.LLM.Model)
+	fmt.Printf("%s %s\n", a.theme.FormatInfo("Theme:"), a.cfg.UI.Theme)
 
 	if a.sshClient != nil && a.sshClient.IsConnected() {
-		fmt.Printf("Connected to: %s (remote)\n", a.sshClient.HostInfoString())
+		fmt.Printf("%s %s\n", a.theme.FormatInfo("Connected to:"), a.theme.FormatSuccess(a.sshClient.HostInfoString()+" (remote)"))
 	} else {
-		fmt.Printf("Connected to: %s (local)\n", a.localClient.HostInfoString())
+		fmt.Printf("%s %s\n", a.theme.FormatInfo("Connected to:"), a.localClient.HostInfoString()+" (local)")
 	}
 }
 
@@ -583,7 +590,7 @@ func isHostsRequest(input string) bool {
 
 func (a *App) showHistory(query string) error {
 	if a.historyManager == nil {
-		fmt.Println("History feature is not available.")
+		fmt.Println(a.theme.FormatWarning("History feature is not available."))
 		return nil
 	}
 
@@ -594,18 +601,43 @@ func (a *App) showHistory(query string) error {
 		records = a.historyManager.SearchRecords(query)
 	}
 
-	fmt.Print(history.FormatRecords(records))
+	// Convert to theme records
+	themeRecords := make([]theme.HistoryRecord, len(records))
+	for i, r := range records {
+		themeRecords[i] = theme.HistoryRecord{
+			ID:         r.ID,
+			HostKey:    r.HostKey(),
+			LoginCount: r.LoginCount,
+			Timestamp:  r.Timestamp.Format("2006-01-02 15:04:05"),
+			HasPubKey:  r.HasPubKey,
+		}
+	}
+
+	fmt.Print(a.theme.FormatHistoryRecords(themeRecords))
 	return nil
 }
 
 func (a *App) showHosts() error {
 	if a.historyManager == nil {
-		fmt.Println("Hosts feature is not available.")
+		fmt.Println(a.theme.FormatWarning("Hosts feature is not available."))
 		return nil
 	}
 
 	records := a.historyManager.GetRecords()
-	fmt.Print(history.FormatHostsSimple(records))
+
+	// Convert to theme records
+	themeRecords := make([]theme.HistoryRecord, len(records))
+	for i, r := range records {
+		themeRecords[i] = theme.HistoryRecord{
+			ID:         r.ID,
+			HostKey:    r.HostKey(),
+			LoginCount: r.LoginCount,
+			Timestamp:  r.Timestamp.Format("2006-01-02 15:04:05"),
+			HasPubKey:  r.HasPubKey,
+		}
+	}
+
+	fmt.Print(a.theme.FormatHostsSimple(themeRecords))
 	return nil
 }
 
@@ -636,20 +668,35 @@ func handleHostsCommand() {
 	defer historyMgr.Close()
 
 	records := historyMgr.GetRecords()
-	fmt.Print(history.FormatHostsSimple(records))
+
+	// Use default theme for subcommand output
+	t := theme.DefaultTheme()
+	themeRecords := make([]theme.HistoryRecord, len(records))
+	for i, r := range records {
+		themeRecords[i] = theme.HistoryRecord{
+			ID:         r.ID,
+			HostKey:    r.HostKey(),
+			LoginCount: r.LoginCount,
+			Timestamp:  r.Timestamp.Format("2006-01-02 15:04:05"),
+			HasPubKey:  r.HasPubKey,
+		}
+	}
+	fmt.Print(t.FormatHostsSimple(themeRecords))
 }
 
-func printBanner() {
-	fmt.Print(`
+func (a *App) printBanner() {
+	banner := `
   _____ _    _ ______ _____  _      ____   _____ _  __
  / ____| |  | |  ____|  __ \| |    / __ \ / ____| |/ /
 | (___ | |__| | |__  | |__) | |   | |  | | |    | ' / 
  \___ \|  __  |  __| |  _  /| |   | |  | | |    |  <  
  ____) | |  | | |____| | \ \| |___| |__| | |____| . \ 
 |_____/|_|  |_|______|_|  \_\______\____/ \_____|_|\_\
-                                                      
-AI-powered SSH Remote Operations Tool
-`)
+`
+	subtitle := "AI-powered SSH Remote Operations Tool"
+
+	fmt.Println(a.theme.FormatBanner(banner))
+	fmt.Println(a.theme.FormatBannerSubtitle(subtitle))
 }
 
 func printHelp() {
@@ -679,37 +726,41 @@ For more information, visit: https://github.com/warm3snow/Sherlock
 `, appName, description)
 }
 
-func printCommandHelp() {
-	fmt.Print(`
-Available commands:
-  help                    Show this help message
-  exit, quit, q           Exit Sherlock
-  status                  Show current status
-  hosts                   Show all saved hosts
-  history                 Show login history
-  history <query>         Search login history
-  disconnect              Disconnect from remote host (switch to local mode)
+func (a *App) printCommandHelp() {
+	fmt.Println()
+	fmt.Println(a.theme.FormatTableHeader("Available commands:"))
+	fmt.Printf("  %s                    %s\n", a.theme.FormatCommand("help"), a.theme.FormatDescription("Show this help message"))
+	fmt.Printf("  %s           %s\n", a.theme.FormatCommand("exit, quit, q"), a.theme.FormatDescription("Exit Sherlock"))
+	fmt.Printf("  %s                  %s\n", a.theme.FormatCommand("status"), a.theme.FormatDescription("Show current status"))
+	fmt.Printf("  %s                   %s\n", a.theme.FormatCommand("hosts"), a.theme.FormatDescription("Show all saved hosts"))
+	fmt.Printf("  %s                 %s\n", a.theme.FormatCommand("history"), a.theme.FormatDescription("Show login history"))
+	fmt.Printf("  %s         %s\n", a.theme.FormatCommand("history <query>"), a.theme.FormatDescription("Search login history"))
+	fmt.Printf("  %s              %s\n", a.theme.FormatCommand("disconnect"), a.theme.FormatDescription("Disconnect from remote host (switch to local mode)"))
 
-Connection:
-  connect <host>          Connect to a remote host
-  connect <id>            Connect to a saved host by ID
-  ssh user@host:port      Connect using SSH-like syntax
-  Or describe in natural language, e.g., "connect to server 192.168.1.100 as root"
-  Note: If you have logged in before with SSH key, no password will be required.
+	fmt.Println()
+	fmt.Println(a.theme.FormatTableHeader("Connection:"))
+	fmt.Printf("  %s          %s\n", a.theme.FormatCommand("connect <host>"), a.theme.FormatDescription("Connect to a remote host"))
+	fmt.Printf("  %s            %s\n", a.theme.FormatCommand("connect <id>"), a.theme.FormatDescription("Connect to a saved host by ID"))
+	fmt.Printf("  %s      %s\n", a.theme.FormatCommand("ssh user@host:port"), a.theme.FormatDescription("Connect using SSH-like syntax"))
+	fmt.Printf("  %s\n", a.theme.FormatDescription("Or describe in natural language, e.g., \"connect to server 192.168.1.100 as root\""))
+	fmt.Printf("  %s\n", a.theme.FormatInfo("Note: If you have logged in before with SSH key, no password will be required."))
 
-Hosts:
-  hosts                   Show all saved hosts with IDs
-  Or use natural language, e.g., "show my hosts" or "显示主机"
+	fmt.Println()
+	fmt.Println(a.theme.FormatTableHeader("Hosts:"))
+	fmt.Printf("  %s                   %s\n", a.theme.FormatCommand("hosts"), a.theme.FormatDescription("Show all saved hosts with IDs"))
+	fmt.Printf("  %s\n", a.theme.FormatDescription("Or use natural language, e.g., \"show my hosts\" or \"显示主机\""))
 
-History:
-  history                 Show all login history
-  history <query>         Search history by host, user, or pattern
-  Or use natural language, e.g., "show my login history"
+	fmt.Println()
+	fmt.Println(a.theme.FormatTableHeader("History:"))
+	fmt.Printf("  %s                 %s\n", a.theme.FormatCommand("history"), a.theme.FormatDescription("Show all login history"))
+	fmt.Printf("  %s         %s\n", a.theme.FormatCommand("history <query>"), a.theme.FormatDescription("Search history by host, user, or pattern"))
+	fmt.Printf("  %s\n", a.theme.FormatDescription("Or use natural language, e.g., \"show my login history\""))
 
-Commands (local or remote):
-  $<command>              Execute a command directly, e.g., $ls -la
-  Or describe in natural language, e.g., "show me disk usage"
+	fmt.Println()
+	fmt.Println(a.theme.FormatTableHeader("Commands (local or remote):"))
+	fmt.Printf("  %s              %s\n", a.theme.FormatCommand("$<command>"), a.theme.FormatDescription("Execute a command directly, e.g., $ls -la"))
+	fmt.Printf("  %s\n", a.theme.FormatDescription("Or describe in natural language, e.g., \"show me disk usage\""))
 
-Note: When not connected to a remote host, commands are executed locally.
-`)
+	fmt.Println()
+	fmt.Printf("%s\n", a.theme.FormatInfo("Note: When not connected to a remote host, commands are executed locally."))
 }

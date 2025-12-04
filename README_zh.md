@@ -82,11 +82,32 @@ Sherlock 会自动从 `~/.ssh/` 目录检测 SSH 密钥。优先使用 `id_ed255
     "private_key_path": "~/.ssh/id_rsa",
     "public_key_path": "~/.ssh/id_rsa.pub",
     "auto_add_to_remote": true
+  },
+  "ui": {
+    "theme": "dracula"
   }
 }
 ```
 
 **注意：** `ssh_key` 配置项是可选的。如果不配置，Sherlock 会自动检测 SSH 密钥。
+
+#### 界面主题
+
+Sherlock 支持三种颜色主题：
+
+- **default** - 简洁的单色主题（无颜色）
+- **dracula** - 流行的暗色主题，带有紫色/粉色强调色
+- **solarized** - 专业的配色方案，使用蓝色/青色调
+
+要更改主题，请在配置文件中添加 `ui` 部分：
+
+```json
+{
+  "ui": {
+    "theme": "dracula"
+  }
+}
+```
 
 #### LLM 提供商配置
 
@@ -221,7 +242,9 @@ Sherlock/
 ├── internal/
 │   ├── agent/             # 自然语言处理 AI 代理
 │   ├── ai/                # LLM 客户端实现 (Ollama, OpenAI, DeepSeek)
-│   └── config/            # 配置管理
+│   ├── config/            # 配置管理
+│   ├── history/           # 登录历史管理
+│   └── theme/             # 界面主题支持
 ├── pkg/
 │   └── sshclient/         # SSH 客户端实现
 ├── go.mod

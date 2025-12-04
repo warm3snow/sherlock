@@ -74,6 +74,10 @@ type Theme struct {
 	CommandName string
 	CommandDesc string
 
+	// Command output colors
+	Stdout string
+	Stderr string
+
 	// Table colors
 	TableHeader  string
 	TableBorder  string
@@ -98,6 +102,8 @@ func DefaultTheme() *Theme {
 		Error:           "",
 		CommandName:     "",
 		CommandDesc:     "",
+		Stdout:          "",
+		Stderr:          "",
 		TableHeader:     "",
 		TableBorder:     "",
 		TableContent:    "",
@@ -120,6 +126,8 @@ func DraculaTheme() *Theme {
 		Error:           BrightRed,
 		CommandName:     BrightMagenta,
 		CommandDesc:     BrightWhite,
+		Stdout:          BrightWhite,
+		Stderr:          BrightRed,
 		TableHeader:     BrightMagenta + Bold,
 		TableBorder:     BrightBlack,
 		TableContent:    BrightWhite,
@@ -142,6 +150,8 @@ func SolarizedTheme() *Theme {
 		Error:           Red,
 		CommandName:     Blue,
 		CommandDesc:     White,
+		Stdout:          White,
+		Stderr:          Red,
 		TableHeader:     Blue + Bold,
 		TableBorder:     BrightBlack,
 		TableContent:    White,
@@ -233,6 +243,22 @@ func (t *Theme) FormatDescription(desc string) string {
 		return desc
 	}
 	return t.CommandDesc + desc + t.Reset
+}
+
+// FormatStdout formats command standard output.
+func (t *Theme) FormatStdout(output string) string {
+	if t.Stdout == "" {
+		return output
+	}
+	return t.Stdout + output + t.Reset
+}
+
+// FormatStderr formats command standard error output.
+func (t *Theme) FormatStderr(output string) string {
+	if t.Stderr == "" {
+		return output
+	}
+	return t.Stderr + output + t.Reset
 }
 
 // FormatTableHeader formats table header text.

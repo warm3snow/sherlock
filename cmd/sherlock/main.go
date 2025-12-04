@@ -475,10 +475,10 @@ func (a *App) executeCommand(cmd string) error {
 	}
 
 	if result.Stdout != "" {
-		fmt.Print(result.Stdout)
+		fmt.Print(a.theme.FormatStdout(result.Stdout))
 	}
 	if result.Stderr != "" {
-		fmt.Fprintf(os.Stderr, "%s", result.Stderr)
+		fmt.Fprint(os.Stderr, a.theme.FormatStderr(result.Stderr))
 	}
 
 	if result.Error != nil {

@@ -32,7 +32,7 @@ func TestIsShellCommand(t *testing.T) {
 		{name: "cd command", input: "cd /home", want: true},
 		{name: "cat file", input: "cat /etc/passwd", want: true},
 		{name: "grep pattern", input: "grep -r pattern .", want: true},
-		
+
 		// System commands
 		{name: "df command", input: "df -h", want: true},
 		{name: "ps command", input: "ps aux", want: true},
@@ -106,7 +106,7 @@ func TestParseCommandDirect(t *testing.T) {
 		{name: "git command", input: "git status", wantNil: false, wantCommand: "git status"},
 		{name: "absolute path", input: "/usr/bin/env", wantNil: false, wantCommand: "/usr/bin/env"},
 		{name: "relative path", input: "./run.sh", wantNil: false, wantCommand: "./run.sh"},
-		
+
 		// Natural language should return nil
 		{name: "natural language disk", input: "show me disk usage", wantNil: true},
 		{name: "natural language files", input: "list all files in current directory", wantNil: true},
@@ -130,6 +130,89 @@ func TestParseCommandDirect(t *testing.T) {
 			}
 			if len(result.Commands) != 1 || result.Commands[0] != tt.wantCommand {
 				t.Errorf("parseCommandDirect(%q).Commands = %v, want [%q]", tt.input, result.Commands, tt.wantCommand)
+			}
+		})
+	}
+}
+
+func TestIsDangerousCommand(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  bool
+	}{
+		// Dangerous commands
+		{name: "rm command", input: "rm file.txt", want: true},
+		{name: "rm -rf command", input: "rm -rf /tmp/dir", want: true},
+		{name: "rm with flag", input: "rm -r dir", want: true},
+		{name: "chmod command", input: "chmod 755 file.sh", want: true},
+		{name: "chown command", input: "chown root:root file", want: true},
+		{name: "sudo command", input: "sudo apt update", want: true},
+		{name: "systemctl command", input: "systemctl restart nginx", want: true},
+		{name: "shutdown command", input: "shutdown -h now", want: true},
+		{name: "reboot command", input: "reboot", want: true},
+		{name: "apt command", input: "apt install vim", want: true},
+		{name: "yum command", input: "yum remove httpd", want: true},
+		{name: "useradd command", input: "useradd newuser", want: true},
+		{name: "passwd command", input: "passwd root", want: true},
+		{name: "fdisk command", input: "fdisk /dev/sda", want: true},
+		{name: "dd command", input: "dd if=/dev/zero of=/dev/sda", want: true},
+
+		// Safe commands
+		{name: "ls command", input: "ls -la", want: false},
+		{name: "cat command", input: "cat /etc/passwd", want: false},
+		{name: "grep command", input: "grep pattern file", want: false},
+		{name: "ps command", input: "ps aux", want: false},
+		{name: "df command", input: "df -h", want: false},
+		{name: "ping command", input: "ping google.com", want: false},
+		{name: "curl command", input: "curl https://example.com", want: false},
+		{name: "git command", input: "git status", want: false},
+		{name: "docker ps", input: "docker ps", want: false},
+
+		// Edge cases
+		{name: "empty string", input: "", want: false},
+		{name: "whitespace only", input: "   ", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isDangerousCommand(tt.input); got != tt.want {
+				t.Errorf("isDangerousCommand(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseCommandDirectNeedsConfirm(t *testing.T) {
+	tests := []struct {
+		name            string
+		input           string
+		wantNeedsConfirm bool
+	}{
+		// Dangerous commands should require confirmation
+		{name: "rm command", input: "rm file.txt", wantNeedsConfirm: true},
+		{name: "rm -rf command", input: "rm -rf /tmp/dir", wantNeedsConfirm: true},
+		{name: "sudo command", input: "sudo apt update", wantNeedsConfirm: true},
+		{name: "chmod command", input: "chmod 755 file.sh", wantNeedsConfirm: true},
+		{name: "shutdown command", input: "shutdown -h now", wantNeedsConfirm: true},
+
+		// Safe commands should not require confirmation
+		{name: "ls command", input: "ls -la", wantNeedsConfirm: false},
+		{name: "cat command", input: "cat /etc/passwd", wantNeedsConfirm: false},
+		{name: "df command", input: "df -h", wantNeedsConfirm: false},
+		{name: "ps command", input: "ps aux", wantNeedsConfirm: false},
+		{name: "git status", input: "git status", wantNeedsConfirm: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := parseCommandDirect(tt.input)
+			if result == nil {
+				t.Errorf("parseCommandDirect(%q) = nil, want non-nil", tt.input)
+				return
+			}
+			if result.NeedsConfirm != tt.wantNeedsConfirm {
+				t.Errorf("parseCommandDirect(%q).NeedsConfirm = %v, want %v", tt.input, result.NeedsConfirm, tt.wantNeedsConfirm)
 			}
 		})
 	}

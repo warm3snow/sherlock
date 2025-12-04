@@ -237,6 +237,61 @@ var commonShellCommands = []string{
 	"git", "svn", "hg",
 }
 
+// dangerousCommands contains commands that may be potentially dangerous
+// and should require user confirmation before execution.
+var dangerousCommands = []string{
+	// File operations that may cause data loss
+	"rm", "rmdir", "mv", "dd",
+	// Permission changes
+	"chmod", "chown", "chgrp",
+	// System operations
+	"shutdown", "reboot", "halt", "poweroff",
+	"systemctl", "service",
+	// Elevated privileges
+	"sudo", "su",
+	// Disk operations
+	"fdisk", "parted", "mkfs", "fsck",
+	// Package installation/removal (may modify system)
+	"apt", "apt-get", "dpkg", "yum", "dnf", "rpm", "pacman", "zypper",
+	// Network configuration
+	"iptables", "nft", "firewall-cmd",
+	// User management
+	"useradd", "userdel", "usermod", "groupadd", "groupdel", "groupmod", "passwd",
+}
+
+// isDangerousCommand checks if the command is potentially dangerous
+// and should require user confirmation.
+func isDangerousCommand(input string) bool {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return false
+	}
+
+	parts := strings.Fields(input)
+	if len(parts) == 0 {
+		return false
+	}
+
+	cmdName := strings.ToLower(parts[0])
+
+	// Check if command itself is dangerous
+	for _, cmd := range dangerousCommands {
+		if cmdName == cmd {
+			return true
+		}
+	}
+
+	// Check for dangerous patterns in the full command
+	lowerInput := strings.ToLower(input)
+	
+	// rm with -r/-rf flags is especially dangerous
+	if cmdName == "rm" && (strings.Contains(lowerInput, " -r") || strings.Contains(lowerInput, " -f")) {
+		return true
+	}
+
+	return false
+}
+
 // IsShellCommand checks if the input looks like a common shell command.
 // It returns true if the input starts with a known command prefix.
 func IsShellCommand(input string) bool {
@@ -280,7 +335,7 @@ func parseCommandDirect(request string) *CommandInfo {
 		return &CommandInfo{
 			Commands:     []string{cmd},
 			Description:  "Direct shell command execution",
-			NeedsConfirm: false,
+			NeedsConfirm: isDangerousCommand(cmd),
 		}
 	}
 

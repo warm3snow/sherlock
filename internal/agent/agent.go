@@ -189,75 +189,87 @@ func parseConnectionDirect(request string) *ConnectionInfo {
 	return nil
 }
 
-// commonShellCommands contains shell command prefixes that can be executed directly
-// without LLM translation.
-var commonShellCommands = []string{
-	// File and directory operations
-	"ls", "ll", "la", "dir", "cd", "pwd", "mkdir", "rmdir", "rm", "cp", "mv",
-	"touch", "cat", "head", "tail", "less", "more", "find", "locate", "tree",
-	"ln", "file", "stat", "du", "df", "mount", "umount",
-	// Text processing
-	"grep", "awk", "sed", "cut", "sort", "uniq", "wc", "tr", "diff", "comm",
-	"xargs", "tee",
-	// System information
-	"uname", "hostname", "uptime", "date", "cal", "who", "w", "id", "whoami",
-	"last", "lastlog", "free", "top", "htop", "vmstat", "iostat", "sar",
-	"lscpu", "lsmem", "lsblk", "lspci", "lsusb", "dmesg", "journalctl",
-	// Process management
-	"ps", "kill", "killall", "pkill", "pgrep", "nice", "renice", "nohup",
-	"jobs", "bg", "fg", "disown",
-	// Network
-	"ping", "traceroute", "tracepath", "netstat", "ss", "ip", "ifconfig",
-	"route", "arp", "dig", "nslookup", "host", "wget", "curl", "nc", "telnet",
-	"ssh", "scp", "rsync", "ftp", "sftp", "iptables", "nft", "firewall-cmd",
-	// Package management
-	"apt", "apt-get", "dpkg", "yum", "dnf", "rpm", "pacman", "zypper", "brew",
-	"pip", "pip3", "npm", "yarn", "gem", "cargo", "go",
-	// Service management
-	"systemctl", "service", "chkconfig", "update-rc.d",
-	// User and permission management
-	"useradd", "userdel", "usermod", "groupadd", "groupdel", "groupmod",
-	"passwd", "chown", "chmod", "chgrp", "sudo", "su",
-	// Archive and compression
-	"tar", "gzip", "gunzip", "zip", "unzip", "bzip2", "xz", "7z",
-	// Disk and filesystem
-	"fdisk", "parted", "mkfs", "fsck", "dd", "sync",
-	// Environment
-	"env", "export", "set", "unset", "source", "alias", "unalias", "echo",
-	"printf", "read", "test",
-	// Editors and viewers
-	"vi", "vim", "nano", "emacs", "ed",
-	// Other utilities
-	"man", "info", "which", "whereis", "type", "clear",
-	"reset", "shutdown", "reboot", "halt", "poweroff",
-	"sleep", "watch", "timeout", "time", "seq", "yes", "true", "false",
-	// Docker and container
-	"docker", "docker-compose", "podman", "kubectl", "crictl",
-	// Version control
-	"git", "svn", "hg",
-}
+// commonShellCommandsMap is a map for O(1) lookup of common shell commands.
+var commonShellCommandsMap = func() map[string]bool {
+	commands := []string{
+		// File and directory operations
+		"ls", "cd", "pwd", "mkdir", "rmdir", "rm", "cp", "mv",
+		"touch", "cat", "head", "tail", "less", "more", "find", "locate", "tree",
+		"ln", "file", "stat", "du", "df", "mount", "umount",
+		// Text processing
+		"grep", "awk", "sed", "cut", "sort", "uniq", "wc", "tr", "diff", "comm",
+		"xargs", "tee",
+		// System information
+		"uname", "hostname", "uptime", "date", "cal", "who", "w", "id", "whoami",
+		"last", "lastlog", "free", "top", "htop", "vmstat", "iostat", "sar",
+		"lscpu", "lsmem", "lsblk", "lspci", "lsusb", "dmesg", "journalctl",
+		// Process management
+		"ps", "kill", "killall", "pkill", "pgrep", "nice", "renice", "nohup",
+		"jobs", "bg", "fg", "disown",
+		// Network
+		"ping", "traceroute", "tracepath", "netstat", "ss", "ip", "ifconfig",
+		"route", "arp", "dig", "nslookup", "host", "wget", "curl", "nc", "telnet",
+		"ssh", "scp", "rsync", "ftp", "sftp", "iptables", "nft", "firewall-cmd",
+		// Package management
+		"apt", "apt-get", "dpkg", "yum", "dnf", "rpm", "pacman", "zypper", "brew",
+		"pip", "pip3", "npm", "yarn", "gem", "cargo", "go",
+		// Service management
+		"systemctl", "service", "chkconfig", "update-rc.d",
+		// User and permission management
+		"useradd", "userdel", "usermod", "groupadd", "groupdel", "groupmod",
+		"passwd", "chown", "chmod", "chgrp", "sudo", "su",
+		// Archive and compression
+		"tar", "gzip", "gunzip", "zip", "unzip", "bzip2", "xz", "7z",
+		// Disk and filesystem
+		"fdisk", "parted", "mkfs", "fsck", "dd", "sync",
+		// Environment
+		"env", "export", "set", "unset", "source", "alias", "unalias", "echo",
+		"printf", "read", "test",
+		// Editors and viewers
+		"vi", "vim", "nano", "emacs", "ed",
+		// Other utilities
+		"man", "info", "which", "whereis", "type", "clear",
+		"reset", "shutdown", "reboot", "halt", "poweroff",
+		"sleep", "watch", "timeout", "time", "seq", "yes", "true", "false",
+		// Docker and container
+		"docker", "docker-compose", "podman", "kubectl", "crictl",
+		// Version control
+		"git", "svn", "hg",
+	}
+	m := make(map[string]bool, len(commands))
+	for _, cmd := range commands {
+		m[cmd] = true
+	}
+	return m
+}()
 
-// dangerousCommands contains commands that may be potentially dangerous
-// and should require user confirmation before execution.
-var dangerousCommands = []string{
-	// File operations that may cause data loss
-	"rm", "rmdir", "mv", "dd",
-	// Permission changes
-	"chmod", "chown", "chgrp",
-	// System operations
-	"shutdown", "reboot", "halt", "poweroff",
-	"systemctl", "service",
-	// Elevated privileges
-	"sudo", "su",
-	// Disk operations
-	"fdisk", "parted", "mkfs", "fsck",
-	// Package installation/removal (may modify system)
-	"apt", "apt-get", "dpkg", "yum", "dnf", "rpm", "pacman", "zypper",
-	// Network configuration
-	"iptables", "nft", "firewall-cmd",
-	// User management
-	"useradd", "userdel", "usermod", "groupadd", "groupdel", "groupmod", "passwd",
-}
+// dangerousCommandsMap is a map for O(1) lookup of dangerous commands.
+var dangerousCommandsMap = func() map[string]bool {
+	commands := []string{
+		// File operations that may cause data loss
+		"rm", "rmdir", "mv", "dd",
+		// Permission changes
+		"chmod", "chown", "chgrp",
+		// System operations
+		"shutdown", "reboot", "halt", "poweroff",
+		"systemctl", "service",
+		// Elevated privileges
+		"sudo", "su",
+		// Disk operations
+		"fdisk", "parted", "mkfs", "fsck",
+		// Package installation/removal (may modify system)
+		"apt", "apt-get", "dpkg", "yum", "dnf", "rpm", "pacman", "zypper",
+		// Network configuration
+		"iptables", "nft", "firewall-cmd",
+		// User management
+		"useradd", "userdel", "usermod", "groupadd", "groupdel", "groupmod", "passwd",
+	}
+	m := make(map[string]bool, len(commands))
+	for _, cmd := range commands {
+		m[cmd] = true
+	}
+	return m
+}()
 
 // isDangerousCommand checks if the command is potentially dangerous
 // and should require user confirmation.
@@ -274,14 +286,8 @@ func isDangerousCommand(input string) bool {
 
 	cmdName := strings.ToLower(parts[0])
 
-	// Check if command itself is dangerous
-	for _, cmd := range dangerousCommands {
-		if cmdName == cmd {
-			return true
-		}
-	}
-
-	return false
+	// O(1) lookup using map
+	return dangerousCommandsMap[cmdName]
 }
 
 // IsShellCommand checks if the input looks like a common shell command.
@@ -300,11 +306,9 @@ func IsShellCommand(input string) bool {
 
 	cmdName := strings.ToLower(parts[0])
 
-	// Check if it matches a common shell command
-	for _, cmd := range commonShellCommands {
-		if cmdName == cmd {
-			return true
-		}
+	// O(1) lookup using map
+	if commonShellCommandsMap[cmdName] {
+		return true
 	}
 
 	// Check for commands with path prefix (e.g., /usr/bin/ls, ./script.sh)

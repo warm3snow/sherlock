@@ -280,6 +280,9 @@ func isDangerousCommand(input string) bool {
 	}
 
 	parts := strings.Fields(input)
+	if len(parts) == 0 {
+		return false
+	}
 	cmdName := strings.ToLower(parts[0])
 
 	// O(1) lookup using map
@@ -296,6 +299,9 @@ func IsShellCommand(input string) bool {
 
 	// Get the first word (command name)
 	parts := strings.Fields(input)
+	if len(parts) == 0 {
+		return false
+	}
 	cmdName := strings.ToLower(parts[0])
 
 	// O(1) lookup using map

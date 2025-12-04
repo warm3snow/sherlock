@@ -32,12 +32,12 @@ import (
 
 	"github.com/peterh/liner"
 
-	"github.com/warm3snow/Sherlock/internal/agent"
-	"github.com/warm3snow/Sherlock/internal/ai"
-	"github.com/warm3snow/Sherlock/internal/config"
-	"github.com/warm3snow/Sherlock/internal/history"
-	"github.com/warm3snow/Sherlock/internal/theme"
-	"github.com/warm3snow/Sherlock/pkg/sshclient"
+	"github.com/warm3snow/sherlock/internal/agent"
+	"github.com/warm3snow/sherlock/internal/ai"
+	"github.com/warm3snow/sherlock/internal/config"
+	"github.com/warm3snow/sherlock/internal/history"
+	"github.com/warm3snow/sherlock/internal/theme"
+	"github.com/warm3snow/sherlock/pkg/sshclient"
 )
 
 const (

@@ -24,7 +24,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/warm3snow/Sherlock/internal/config"
+	"github.com/warm3snow/sherlock/internal/config"
 )
 
 // ModelClient interface defines methods for interacting with LLM models.

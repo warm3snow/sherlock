@@ -284,6 +284,9 @@ func TestShellEscape(t *testing.T) {
 		if result != test.expected {
 			t.Errorf("ShellEscape(%q) = %q, expected %q", test.input, result, test.expected)
 		}
+	}
+}
+
 func TestIsValidTermType(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -156,6 +156,68 @@ func TestThemeFormatPrompt(t *testing.T) {
 	}
 }
 
+func TestThemeFormatStdout(t *testing.T) {
+	// Test with default theme (no colors)
+	defaultTheme := DefaultTheme()
+	if got := defaultTheme.FormatStdout("output"); got != "output" {
+		t.Errorf("DefaultTheme.FormatStdout() = %q, want %q", got, "output")
+	}
+
+	// Test with Dracula theme (with colors)
+	draculaTheme := DraculaTheme()
+	stdoutResult := draculaTheme.FormatStdout("output")
+	if !strings.HasPrefix(stdoutResult, draculaTheme.Stdout) {
+		t.Errorf("DraculaTheme.FormatStdout() should start with Stdout color code")
+	}
+	if !strings.HasSuffix(stdoutResult, draculaTheme.Reset) {
+		t.Errorf("DraculaTheme.FormatStdout() should end with Reset code")
+	}
+	if !strings.Contains(stdoutResult, "output") {
+		t.Errorf("DraculaTheme.FormatStdout() should contain the original text")
+	}
+
+	// Test with Solarized theme
+	solarizedTheme := SolarizedTheme()
+	solarizedResult := solarizedTheme.FormatStdout("test output")
+	if !strings.HasPrefix(solarizedResult, solarizedTheme.Stdout) {
+		t.Errorf("SolarizedTheme.FormatStdout() should start with Stdout color code")
+	}
+	if !strings.Contains(solarizedResult, "test output") {
+		t.Errorf("SolarizedTheme.FormatStdout() should contain the original text")
+	}
+}
+
+func TestThemeFormatStderr(t *testing.T) {
+	// Test with default theme (no colors)
+	defaultTheme := DefaultTheme()
+	if got := defaultTheme.FormatStderr("error"); got != "error" {
+		t.Errorf("DefaultTheme.FormatStderr() = %q, want %q", got, "error")
+	}
+
+	// Test with Dracula theme (with colors)
+	draculaTheme := DraculaTheme()
+	stderrResult := draculaTheme.FormatStderr("error")
+	if !strings.HasPrefix(stderrResult, draculaTheme.Stderr) {
+		t.Errorf("DraculaTheme.FormatStderr() should start with Stderr color code")
+	}
+	if !strings.HasSuffix(stderrResult, draculaTheme.Reset) {
+		t.Errorf("DraculaTheme.FormatStderr() should end with Reset code")
+	}
+	if !strings.Contains(stderrResult, "error") {
+		t.Errorf("DraculaTheme.FormatStderr() should contain the original text")
+	}
+
+	// Test with Solarized theme
+	solarizedTheme := SolarizedTheme()
+	solarizedResult := solarizedTheme.FormatStderr("test error")
+	if !strings.HasPrefix(solarizedResult, solarizedTheme.Stderr) {
+		t.Errorf("SolarizedTheme.FormatStderr() should start with Stderr color code")
+	}
+	if !strings.Contains(solarizedResult, "test error") {
+		t.Errorf("SolarizedTheme.FormatStderr() should contain the original text")
+	}
+}
+
 func TestThemeFormatHistoryRecords(t *testing.T) {
 	theme := DraculaTheme()
 

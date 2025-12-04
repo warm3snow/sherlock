@@ -141,6 +141,9 @@ func NewClient(cfg *Config) (*Client, error) {
 	var authMethods []ssh.AuthMethod
 	var agentConn net.Conn
 
+	// Track already-tried key paths to avoid duplicates (O(1) lookup)
+	triedPaths := make(map[string]bool)
+
 	// Try SSH agent authentication first (highest priority)
 	agentAuth, conn := sshAgentAuth()
 	if agentAuth != nil {
@@ -150,39 +153,34 @@ func NewClient(cfg *Config) (*Client, error) {
 
 	// Try public key authentication with identity files from SSH config
 	for _, keyPath := range sshConfigIdentityFiles {
-		keyAuth, err := publicKeyAuth(keyPath, "")
-		if err == nil {
-			authMethods = append(authMethods, keyAuth)
-		}
-	}
-
-	// Try public key authentication with specified key path
-	if cfg.PrivateKeyPath != "" {
-		keyAuth, err := publicKeyAuth(cfg.PrivateKeyPath, cfg.PrivateKeyPassphrase)
-		if err == nil {
-			authMethods = append(authMethods, keyAuth)
-		}
-	}
-
-	// Try default SSH key paths (always try to add more auth methods)
-	for _, keyPath := range GetDefaultKeyPaths() {
-		if keyPath == cfg.PrivateKeyPath {
-			continue // Skip if already tried
-		}
-		// Skip if already tried from SSH config
-		skip := false
-		for _, configPath := range sshConfigIdentityFiles {
-			if keyPath == configPath {
-				skip = true
-				break
-			}
-		}
-		if skip {
+		if triedPaths[keyPath] {
 			continue
 		}
 		keyAuth, err := publicKeyAuth(keyPath, "")
 		if err == nil {
 			authMethods = append(authMethods, keyAuth)
+			triedPaths[keyPath] = true
+		}
+	}
+
+	// Try public key authentication with specified key path
+	if cfg.PrivateKeyPath != "" && !triedPaths[cfg.PrivateKeyPath] {
+		keyAuth, err := publicKeyAuth(cfg.PrivateKeyPath, cfg.PrivateKeyPassphrase)
+		if err == nil {
+			authMethods = append(authMethods, keyAuth)
+			triedPaths[cfg.PrivateKeyPath] = true
+		}
+	}
+
+	// Try default SSH key paths (always try to add more auth methods)
+	for _, keyPath := range GetDefaultKeyPaths() {
+		if triedPaths[keyPath] {
+			continue
+		}
+		keyAuth, err := publicKeyAuth(keyPath, "")
+		if err == nil {
+			authMethods = append(authMethods, keyAuth)
+			triedPaths[keyPath] = true
 		}
 	}
 

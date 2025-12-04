@@ -17,6 +17,7 @@ package sshclient
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -206,7 +207,7 @@ func CreateHostKeyCallback(strictHostKeyChecking bool) ssh.HostKeyCallback {
 		if strictHostKeyChecking {
 			// Return a callback that rejects all unknown hosts
 			return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-				return &knownhosts.KeyError{Want: nil}
+				return fmt.Errorf("host key verification failed: strict host key checking is enabled and host '%s' is not in known_hosts file (%s)", hostname, knownHostsPath)
 			}
 		}
 		// Return a callback that accepts all hosts (like ssh with StrictHostKeyChecking=no)

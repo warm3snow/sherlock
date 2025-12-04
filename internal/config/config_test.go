@@ -383,3 +383,124 @@ func TestLoadConfig_DoesNotOverrideConfiguredKeys(t *testing.T) {
 		t.Errorf("Expected LoadConfig to preserve configured public key path, got %s", cfg.SSHKey.PublicKeyPath)
 	}
 }
+
+func TestIsValidTheme(t *testing.T) {
+	tests := []struct {
+		name  string
+		theme ThemeType
+		want  bool
+	}{
+		{"default theme", ThemeDefault, true},
+		{"dracula theme", ThemeDracula, true},
+		{"solarized theme", ThemeSolarized, true},
+		{"unknown theme", ThemeType("unknown"), false},
+		{"empty theme", ThemeType(""), false},
+		{"case sensitive", ThemeType("Default"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsValidTheme(tt.theme); got != tt.want {
+				t.Errorf("IsValidTheme(%q) = %v, want %v", tt.theme, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDefaultConfig_HasTheme(t *testing.T) {
+	// Create a temporary directory to use as HOME
+	tmpDir := t.TempDir()
+
+	// Save original HOME and restore after test
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", originalHome)
+
+	cfg := DefaultConfig()
+
+	if cfg.UI.Theme != ThemeDefault {
+		t.Errorf("Expected DefaultConfig to have default theme, got %q", cfg.UI.Theme)
+	}
+}
+
+func TestLoadConfig_WithTheme(t *testing.T) {
+	// Create a temporary directory to use as HOME
+	tmpDir := t.TempDir()
+
+	// Save original HOME and restore after test
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", originalHome)
+
+	// Create a config file with theme set
+	configDir := filepath.Join(tmpDir, ".config", "sherlock")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("Failed to create config directory: %v", err)
+	}
+	configPath := filepath.Join(configDir, "config.json")
+	configContent := `{
+		"llm": {
+			"provider": "ollama",
+			"base_url": "http://localhost:11434",
+			"model": "test-model"
+		},
+		"ui": {
+			"theme": "dracula"
+		}
+	}`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("Failed to create config file: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	if cfg.UI.Theme != ThemeDracula {
+		t.Errorf("Expected UI.Theme to be %q, got %q", ThemeDracula, cfg.UI.Theme)
+	}
+}
+
+func TestValidate_InvalidTheme(t *testing.T) {
+	cfg := &Config{
+		LLM: LLMConfig{
+			Provider: ProviderOllama,
+			BaseURL:  "http://localhost:11434",
+			Model:    "test-model",
+		},
+		UI: UIConfig{
+			Theme: ThemeType("invalid-theme"),
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Error("Expected validation to fail for invalid theme")
+	}
+	if !strings.Contains(err.Error(), "unsupported UI theme") {
+		t.Errorf("Expected error to mention 'unsupported UI theme', got %q", err.Error())
+	}
+}
+
+func TestValidate_ValidThemes(t *testing.T) {
+	themes := []ThemeType{ThemeDefault, ThemeDracula, ThemeSolarized, ""}
+
+	for _, theme := range themes {
+		cfg := &Config{
+			LLM: LLMConfig{
+				Provider: ProviderOllama,
+				BaseURL:  "http://localhost:11434",
+				Model:    "test-model",
+			},
+			UI: UIConfig{
+				Theme: theme,
+			},
+		}
+
+		err := cfg.Validate()
+		if err != nil {
+			t.Errorf("Validate() with theme %q returned error: %v", theme, err)
+		}
+	}
+}

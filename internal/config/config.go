@@ -103,6 +103,34 @@ type ShellCommandsConfig struct {
 	Whitelist []string `json:"whitelist,omitempty"`
 }
 
+// ThemeType defines the type of UI theme.
+type ThemeType string
+
+const (
+	// ThemeDefault is the simple default theme.
+	ThemeDefault ThemeType = "default"
+	// ThemeDracula is the popular dark theme with purple/pink accents.
+	ThemeDracula ThemeType = "dracula"
+	// ThemeSolarized is the professional solarized color scheme.
+	ThemeSolarized ThemeType = "solarized"
+)
+
+// UIConfig holds the UI configuration.
+type UIConfig struct {
+	// Theme specifies the UI color theme (default, dracula, solarized).
+	Theme ThemeType `json:"theme,omitempty"`
+}
+
+// IsValidTheme checks if a theme name is valid.
+func IsValidTheme(name ThemeType) bool {
+	switch name {
+	case ThemeDefault, ThemeDracula, ThemeSolarized:
+		return true
+	default:
+		return false
+	}
+}
+
 // Config represents the main application configuration.
 type Config struct {
 	// LLM holds the LLM provider configuration.
@@ -111,6 +139,8 @@ type Config struct {
 	SSHKey SSHKeyConfig `json:"ssh_key"`
 	// ShellCommands holds the shell commands whitelist configuration.
 	ShellCommands ShellCommandsConfig `json:"shell_commands,omitempty"`
+	// UI holds the UI configuration.
+	UI UIConfig `json:"ui,omitempty"`
 }
 
 // DefaultConfig returns a default configuration.
@@ -124,6 +154,9 @@ func DefaultConfig() *Config {
 		},
 		SSHKey: SSHKeyConfig{
 			AutoAddToRemote: true,
+		},
+		UI: UIConfig{
+			Theme: ThemeDefault,
 		},
 	}
 
@@ -156,6 +189,12 @@ func (c *Config) Validate() error {
 	default:
 		return fmt.Errorf("unsupported LLM provider: %s", c.LLM.Provider)
 	}
+
+	// Validate theme if specified
+	if c.UI.Theme != "" && !IsValidTheme(c.UI.Theme) {
+		return fmt.Errorf("unsupported UI theme: %s (valid: default, dracula, solarized)", c.UI.Theme)
+	}
+
 	return nil
 }
 

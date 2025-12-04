@@ -79,11 +79,32 @@ You typically don't need to configure SSH keys manually. If you want to override
   },
   "shell_commands": {
     "whitelist": ["mycustomcmd", "another-cmd"]
+  },
+  "ui": {
+    "theme": "dracula"
   }
 }
 ```
 
 **Note:** The `ssh_key` section is optional. If omitted, Sherlock will auto-detect SSH keys.
+
+#### UI Themes
+
+Sherlock supports three color themes for the interactive shell:
+
+- **default** - Simple monochrome theme (no colors)
+- **dracula** - Popular dark theme with purple/pink accents
+- **solarized** - Professional color scheme with blue/cyan tones
+
+To change the theme, add the `ui` section to your configuration file:
+
+```json
+{
+  "ui": {
+    "theme": "dracula"
+  }
+}
+```
 
 #### Shell Commands Whitelist
 
@@ -230,7 +251,9 @@ Sherlock/
 ├── internal/
 │   ├── agent/             # AI agent for natural language processing
 │   ├── ai/                # LLM client implementations (Ollama, OpenAI, DeepSeek)
-│   └── config/            # Configuration management
+│   ├── config/            # Configuration management
+│   ├── history/           # Login history management
+│   └── theme/             # UI theme support
 ├── pkg/
 │   └── sshclient/         # SSH client implementation
 ├── go.mod

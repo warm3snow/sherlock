@@ -97,10 +97,10 @@ type SSHKeyConfig struct {
 	AutoAddToRemote bool `json:"auto_add_to_remote"`
 }
 
-// ShellCommandsConfig holds shell commands configuration.
+// ShellCommandsConfig holds the shell commands whitelist configuration.
 type ShellCommandsConfig struct {
-	// Whitelist contains shell commands that are allowed to be executed.
-	Whitelist []string `json:"whitelist"`
+	// Whitelist contains custom shell commands that can be executed directly without LLM translation.
+	Whitelist []string `json:"whitelist,omitempty"`
 }
 
 // Config represents the main application configuration.
@@ -109,8 +109,8 @@ type Config struct {
 	LLM LLMConfig `json:"llm"`
 	// SSHKey holds the SSH key configuration.
 	SSHKey SSHKeyConfig `json:"ssh_key"`
-	// ShellCommands holds the shell commands configuration.
-	ShellCommands ShellCommandsConfig `json:"shell_commands"`
+	// ShellCommands holds the shell commands whitelist configuration.
+	ShellCommands ShellCommandsConfig `json:"shell_commands,omitempty"`
 }
 
 // DefaultConfig returns a default configuration.

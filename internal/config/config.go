@@ -166,6 +166,14 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
+	// Auto-detect SSH keys if not specified in config file
+	if cfg.SSHKey.PrivateKeyPath == "" || cfg.SSHKey.PublicKeyPath == "" {
+		if keyPair, found := DetectSSHKeys(); found {
+			cfg.SSHKey.PrivateKeyPath = keyPair.PrivateKeyPath
+			cfg.SSHKey.PublicKeyPath = keyPair.PublicKeyPath
+		}
+	}
+
 	return &cfg, nil
 }
 

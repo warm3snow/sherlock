@@ -269,3 +269,117 @@ func TestDefaultConfig_NoKeysFound(t *testing.T) {
 		t.Error("Expected AutoAddToRemote to be true by default")
 	}
 }
+
+func TestLoadConfig_AutoDetectsKeys(t *testing.T) {
+	// Create a temporary directory to use as HOME
+	tmpDir := t.TempDir()
+
+	// Save original HOME and restore after test
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", originalHome)
+
+	// Create .ssh directory with ed25519 keys
+	sshDir := filepath.Join(tmpDir, ".ssh")
+	if err := os.MkdirAll(sshDir, 0700); err != nil {
+		t.Fatalf("Failed to create .ssh directory: %v", err)
+	}
+
+	privateKeyPath := filepath.Join(sshDir, "id_ed25519")
+	publicKeyPath := filepath.Join(sshDir, "id_ed25519.pub")
+	if err := os.WriteFile(privateKeyPath, []byte("dummy private key"), 0600); err != nil {
+		t.Fatalf("Failed to create private key: %v", err)
+	}
+	if err := os.WriteFile(publicKeyPath, []byte("dummy public key"), 0644); err != nil {
+		t.Fatalf("Failed to create public key: %v", err)
+	}
+
+	// Create a config file without SSH key paths
+	configDir := filepath.Join(tmpDir, ".config", "sherlock")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("Failed to create config directory: %v", err)
+	}
+	configPath := filepath.Join(configDir, "config.json")
+	configContent := `{
+		"llm": {
+			"provider": "ollama",
+			"base_url": "http://localhost:11434",
+			"model": "test-model"
+		}
+	}`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("Failed to create config file: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	// LoadConfig should have auto-detected the SSH keys
+	if !strings.HasSuffix(cfg.SSHKey.PrivateKeyPath, "id_ed25519") {
+		t.Errorf("Expected LoadConfig to auto-detect ed25519 private key, got %s", cfg.SSHKey.PrivateKeyPath)
+	}
+	if !strings.HasSuffix(cfg.SSHKey.PublicKeyPath, "id_ed25519.pub") {
+		t.Errorf("Expected LoadConfig to auto-detect ed25519 public key, got %s", cfg.SSHKey.PublicKeyPath)
+	}
+}
+
+func TestLoadConfig_DoesNotOverrideConfiguredKeys(t *testing.T) {
+	// Create a temporary directory to use as HOME
+	tmpDir := t.TempDir()
+
+	// Save original HOME and restore after test
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", tmpDir)
+	defer os.Setenv("HOME", originalHome)
+
+	// Create .ssh directory with ed25519 keys
+	sshDir := filepath.Join(tmpDir, ".ssh")
+	if err := os.MkdirAll(sshDir, 0700); err != nil {
+		t.Fatalf("Failed to create .ssh directory: %v", err)
+	}
+
+	privateKeyPath := filepath.Join(sshDir, "id_ed25519")
+	publicKeyPath := filepath.Join(sshDir, "id_ed25519.pub")
+	if err := os.WriteFile(privateKeyPath, []byte("dummy private key"), 0600); err != nil {
+		t.Fatalf("Failed to create private key: %v", err)
+	}
+	if err := os.WriteFile(publicKeyPath, []byte("dummy public key"), 0644); err != nil {
+		t.Fatalf("Failed to create public key: %v", err)
+	}
+
+	// Create a config file with explicitly configured SSH key paths
+	configDir := filepath.Join(tmpDir, ".config", "sherlock")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("Failed to create config directory: %v", err)
+	}
+	configPath := filepath.Join(configDir, "config.json")
+	configContent := `{
+		"llm": {
+			"provider": "ollama",
+			"base_url": "http://localhost:11434",
+			"model": "test-model"
+		},
+		"ssh_key": {
+			"private_key_path": "/custom/path/id_rsa",
+			"public_key_path": "/custom/path/id_rsa.pub"
+		}
+	}`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("Failed to create config file: %v", err)
+	}
+
+	cfg, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	// LoadConfig should NOT override configured SSH keys
+	if cfg.SSHKey.PrivateKeyPath != "/custom/path/id_rsa" {
+		t.Errorf("Expected LoadConfig to preserve configured private key path, got %s", cfg.SSHKey.PrivateKeyPath)
+	}
+	if cfg.SSHKey.PublicKeyPath != "/custom/path/id_rsa.pub" {
+		t.Errorf("Expected LoadConfig to preserve configured public key path, got %s", cfg.SSHKey.PublicKeyPath)
+	}
+}

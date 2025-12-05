@@ -103,7 +103,7 @@ flowchart TB
 |-----------|------|-------------|
 | **Main Application** | `cmd/sherlock/` | CLI entry point, handles user interaction and command routing |
 | **Agent** | `internal/agent/` | AI agent for natural language processing (connection parsing, command translation) |
-| **AI Client** | `internal/ai/` | LLM client implementations using CloudWeGo Eino framework |
+| **AI Client** | `internal/ai/` | LLM client implementations using ByteDance CloudWeGo Eino framework |
 | **Config** | `internal/config/` | Configuration management (JSON config file) |
 | **History** | `internal/history/` | Login history and saved hosts management |
 | **Theme** | `internal/theme/` | UI theme support (default, dracula, solarized) |

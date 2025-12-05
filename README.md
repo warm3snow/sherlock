@@ -38,6 +38,77 @@ Sherlock is an AI-based remote operations tool built on SSH. It enables you to i
 
 6. **🔌 Multiple LLM Providers** - Choose from local (Ollama) or cloud-based (OpenAI, DeepSeek) AI providers based on your privacy and performance needs.
 
+### Architecture
+
+```mermaid
+flowchart TB
+    subgraph User["👤 User"]
+        CLI["Command Line Interface"]
+    end
+
+    subgraph Sherlock["🔍 Sherlock Core"]
+        subgraph CmdLayer["cmd/sherlock"]
+            Main["Main Application"]
+            Liner["Liner (readline)"]
+        end
+
+        subgraph InternalLayer["internal/"]
+            Agent["Agent<br/>(NLP Processing)"]
+            AIClient["AI Client"]
+            Config["Config Manager"]
+            History["History Manager"]
+            Theme["Theme Engine"]
+        end
+
+        subgraph PkgLayer["pkg/"]
+            SSHClient["SSH Client"]
+            LocalClient["Local Client"]
+        end
+    end
+
+    subgraph LLMProviders["🤖 LLM Providers"]
+        Ollama["Ollama (Local)"]
+        OpenAI["OpenAI"]
+        DeepSeek["DeepSeek"]
+    end
+
+    subgraph RemoteHosts["🖥️ Remote Hosts"]
+        SSH1["SSH Server 1"]
+        SSH2["SSH Server 2"]
+        SSHn["SSH Server N"]
+    end
+
+    CLI --> Main
+    Main --> Liner
+    Main --> Agent
+    Main --> Config
+    Main --> History
+    Main --> Theme
+    Main --> SSHClient
+    Main --> LocalClient
+
+    Agent --> AIClient
+    AIClient --> Ollama
+    AIClient --> OpenAI
+    AIClient --> DeepSeek
+
+    SSHClient --> SSH1
+    SSHClient --> SSH2
+    SSHClient --> SSHn
+```
+
+**Component Description:**
+
+| Component | Path | Description |
+|-----------|------|-------------|
+| **Main Application** | `cmd/sherlock/` | CLI entry point, handles user interaction and command routing |
+| **Agent** | `internal/agent/` | AI agent for natural language processing (connection parsing, command translation) |
+| **AI Client** | `internal/ai/` | LLM client implementations using CloudWeGo Eino framework |
+| **Config** | `internal/config/` | Configuration management (JSON config file) |
+| **History** | `internal/history/` | Login history and saved hosts management |
+| **Theme** | `internal/theme/` | UI theme support (default, dracula, solarized) |
+| **SSH Client** | `pkg/sshclient/` | SSH client implementation with PTY support for interactive commands |
+
 ### Features
 
 1. **Natural Language Connection** - Connect to remote hosts by describing what you want in plain language

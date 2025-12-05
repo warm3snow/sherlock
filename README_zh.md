@@ -38,6 +38,77 @@ Sherlock 是一个基于 AI 的远程运维工具，底层基于 SSH。它可以
 
 6. **🔌 多种 LLM 提供商** - 根据您的隐私和性能需求，选择本地（Ollama）或云端（OpenAI、DeepSeek）AI 提供商。
 
+### 架构图
+
+```mermaid
+flowchart TB
+    subgraph User["👤 用户"]
+        CLI["命令行界面"]
+    end
+
+    subgraph Sherlock["🔍 Sherlock 核心"]
+        subgraph CmdLayer["cmd/sherlock"]
+            Main["主应用程序"]
+            Liner["Liner (readline)"]
+        end
+
+        subgraph InternalLayer["internal/"]
+            Agent["Agent<br/>(自然语言处理)"]
+            AIClient["AI 客户端"]
+            Config["配置管理器"]
+            History["历史记录管理"]
+            Theme["主题引擎"]
+        end
+
+        subgraph PkgLayer["pkg/"]
+            SSHClient["SSH 客户端"]
+            LocalClient["本地客户端"]
+        end
+    end
+
+    subgraph LLMProviders["🤖 LLM 提供商"]
+        Ollama["Ollama (本地)"]
+        OpenAI["OpenAI"]
+        DeepSeek["DeepSeek"]
+    end
+
+    subgraph RemoteHosts["🖥️ 远程主机"]
+        SSH1["SSH 服务器 1"]
+        SSH2["SSH 服务器 2"]
+        SSHn["SSH 服务器 N"]
+    end
+
+    CLI --> Main
+    Main --> Liner
+    Main --> Agent
+    Main --> Config
+    Main --> History
+    Main --> Theme
+    Main --> SSHClient
+    Main --> LocalClient
+
+    Agent --> AIClient
+    AIClient --> Ollama
+    AIClient --> OpenAI
+    AIClient --> DeepSeek
+
+    SSHClient --> SSH1
+    SSHClient --> SSH2
+    SSHClient --> SSHn
+```
+
+**组件说明：**
+
+| 组件 | 路径 | 描述 |
+|------|------|------|
+| **主应用程序** | `cmd/sherlock/` | CLI 入口点，处理用户交互和命令路由 |
+| **Agent** | `internal/agent/` | AI 代理，用于自然语言处理（连接解析、命令翻译） |
+| **AI 客户端** | `internal/ai/` | LLM 客户端实现，使用字节跳动 CloudWeGo Eino 框架 |
+| **配置管理器** | `internal/config/` | 配置管理（JSON 配置文件） |
+| **历史记录管理** | `internal/history/` | 登录历史和已保存主机管理 |
+| **主题引擎** | `internal/theme/` | 界面主题支持（default、dracula、solarized） |
+| **SSH 客户端** | `pkg/sshclient/` | SSH 客户端实现，支持交互式命令的 PTY |
+
 ### 主要功能
 
 1. **自然语言连接** - 通过自然语言描述来连接远程主机
